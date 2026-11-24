@@ -104,6 +104,7 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
       <MangaCover key={work.poster} poster={work.poster} />
       <div className="manga-work-meta">
         <h1>{korean?.title ?? work.title}</h1>
+        {korean?.mangaDexUrl && <small><a href={korean.mangaDexUrl} target="_blank" rel="noreferrer">제목 출처 · MangaDex</a></small>}
         {work.author && <p className="manga-work-author">{work.author}</p>}
         {firstChapter && <ButtonLink
           to={`/manga/read/${firstChapter.id}`}

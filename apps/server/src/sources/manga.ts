@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { idParams, object, pageQuery, params, profile, query } from '../http.js';
 import { ApiFailure } from '../util.js';
 import type { SourceItem, SourcePage } from './extensions/index.js';
+import { lookupMangaDexTitle } from './manga-metadata.js';
 import type { Sources } from './service.js';
 
 const idFor = (...parts: string[]) => 'manga-' + createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 40);
@@ -25,6 +26,11 @@ export class Manga {
     const row = this.db.get('SELECT * FROM manga_works WHERE id=?', id);
     if (!row) throw new ApiFailure(404, 'manga-not-found');
     return row;
+  }
+
+  koreanTitle(title: string, profileId: string) {
+    this.assertProfile(profileId);
+    return lookupMangaDexTitle(title.trim());
   }
 
   browse(sourceId: string, profileId: string, page: number, term: string): Promise<Page<MangaCard>> {
@@ -101,6 +107,8 @@ export class Manga {
 
 export function registerMangaRoutes(app: FastifyInstance, sources: Sources) {
   const manga = new Manga(sources);
+  app.get('/api/manga/metadata/korean-title', { schema: { querystring: object({ title: { type: 'string', minLength: 1, maxLength: 500 } }, ['title']) } },
+    async req => manga.koreanTitle(query(req).title, profile(req)));
   app.get('/api/manga/sources/:id/browse', { schema: { params: idParams(), querystring: object({ page: pageQuery, q: { type: 'string', maxLength: 200, default: '' } }) } },
     async req => manga.browse(params(req).id, profile(req), query(req).page ?? 1, query(req).q ?? ''));
   app.get('/api/manga/works/:id', { schema: { params: idParams() } }, async req => manga.detail(params(req).id, profile(req)));

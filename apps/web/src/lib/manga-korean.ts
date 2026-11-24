@@ -1,6 +1,9 @@
+import { api } from './api';
+
 interface KoreanMangaTitle {
   title: string;
   article?: string;
+  mangaDexUrl?: string;
 }
 
 interface WikidataEntity {
@@ -23,7 +26,7 @@ const koreanTitleAliases = new Map<string, KoreanMangaTitle>([
   ['inregardstomyreincarnationasaslimemanga', { title: '전생했더니 슬라임이었던 건에 대하여' }],
   ['shangrilafrontiershittygameshunterchallengesgodlygame', { title: '샹그릴라 프론티어' }],
 ]);
-const titleCacheKey = 'moa.manga.koreanTitles.v1';
+const titleCacheKey = 'moa.manga.koreanTitles.v2';
 const maxCachedTitles = 250;
 const maxConcurrentTitleLookups = 4;
 const waitingTitleLookups: Array<() => void> = [];
@@ -31,8 +34,11 @@ let activeTitleLookups = 0;
 
 function readTitleCache(): Record<string, CachedMangaTitle> {
   try {
-    const entries = JSON.parse(localStorage.getItem(titleCacheKey) ?? '{}');
-    return entries && typeof entries === 'object' && !Array.isArray(entries) ? entries : {};
+    const stored = localStorage.getItem(titleCacheKey);
+    const entries: Record<string, CachedMangaTitle> | null = JSON.parse(stored ?? localStorage.getItem('moa.manga.koreanTitles.v1') ?? '{}');
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {};
+    return stored ? entries : Object.fromEntries(Object.entries(entries)
+      .filter(([, entry]) => entry?.value));
   } catch {
     return {};
   }
@@ -80,6 +86,7 @@ export async function findKoreanMangaTitle(title: string, signal: AbortSignal): 
   const alias = koreanTitleAliases.get(titleKey(title));
   if (alias) return alias;
   const lookupTitle = title.replace(/\s*\(manga\)\s*$/i, '').trim();
+  if (!titleKey(lookupTitle)) return null;
   const key = `title:${lookupTitle.toLowerCase()}`;
   const cached = readTitleCache()[key];
   if (cached?.expiresAt > Date.now()) return cached.value;
@@ -92,7 +99,20 @@ export async function findKoreanMangaTitle(title: string, signal: AbortSignal): 
 
   try {
     signal.throwIfAborted();
-    const result = await lookupKoreanMangaTitle(lookupTitle, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
+    const wikidata = await lookupKoreanMangaTitle(lookupTitle, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
+    if (wikidata) {
+      cacheTitle(key, wikidata);
+      return wikidata;
+    }
+    const mangaDex = await api<{ title?: string; mangaDexUrl?: string; canonical?: string }>(
+      `/manga/metadata/korean-title?title=${encodeURIComponent(lookupTitle)}`,
+      { signal: AbortSignal.any([signal, AbortSignal.timeout(10500)]) },
+    );
+    const result = mangaDex.title
+      ? { title: mangaDex.title, mangaDexUrl: mangaDex.mangaDexUrl }
+      : mangaDex.canonical
+        ? await lookupKoreanMangaTitle(mangaDex.canonical, AbortSignal.any([signal, AbortSignal.timeout(5000)]))
+        : null;
     cacheTitle(key, result);
     return result;
   } finally {
