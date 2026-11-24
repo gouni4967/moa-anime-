@@ -5,6 +5,7 @@ import { ArrowLeft, BookOpen, ChevronRight } from 'lucide-react';
 import type { MangaCard, MangaDetail, MangaPages, Page } from '@moa/shared';
 import { Button, ButtonLink, EmptyState, ScrollLoader, SegmentedControl } from '../components/ui';
 import { api, ApiError, currentProfileId } from '../lib/api';
+import { findKoreanMangaInfo, koreanMangaChapterTitle } from '../lib/manga-korean';
 import { useSources } from './SourcesPage';
 import '../styles/manga.scss';
 
@@ -50,6 +51,10 @@ function MangaCover({ poster }: { poster?: string }) {
 
 function MangaWorkContent({ work }: { work: MangaDetail }) {
   const [order, setOrder] = useState<'oldest' | 'latest'>('oldest');
+  const { data: korean } = useQuery({
+    queryKey: ['manga-korean-info', work.title], retry: false, staleTime: 60 * 60 * 1000,
+    queryFn: ({ signal }) => findKoreanMangaInfo(work.title, signal),
+  });
   const firstChapter = work.chapters[0];
   const chapters = order === 'latest' ? [...work.chapters].reverse() : work.chapters;
 
@@ -60,7 +65,7 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
     <header className="manga-work-hero">
       <MangaCover key={work.poster} poster={work.poster} />
       <div className="manga-work-meta">
-        <h1>{work.title}</h1>
+        <h1>{korean?.title ?? work.title}</h1>
         {work.author && <p className="manga-work-author">{work.author}</p>}
         {firstChapter && <ButtonLink
           to={`/manga/read/${firstChapter.id}`}
@@ -69,7 +74,13 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
         >첫 회차 읽기</ButtonLink>}
       </div>
     </header>
-    {work.description && <section className="manga-synopsis" aria-labelledby="manga-synopsis">
+    {korean?.introduction && <section className="manga-synopsis" aria-labelledby="manga-introduction">
+      <h2 id="manga-introduction">작품 소개</h2>
+      <p>{korean.introduction}</p>
+      <small><a href={korean.articleUrl} target="_blank" rel="noreferrer">한국어 위키백과</a> · <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer">CC BY-SA 4.0</a></small>
+      {work.description && <details><summary>원문 줄거리</summary><p>{work.description}</p></details>}
+    </section>}
+    {!korean?.introduction && work.description && <section className="manga-synopsis" aria-labelledby="manga-synopsis">
       <h2 id="manga-synopsis">줄거리</h2>
       <p>{work.description}</p>
     </section>}
@@ -82,7 +93,7 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
       {chapters.length ? <ul className="manga-chapter-list">
         {chapters.map(chapter => <li key={chapter.id}>
           <Link to={`/manga/read/${chapter.id}`}>
-            <span>{chapter.title}</span><ChevronRight size={18} aria-hidden />
+            <span>{koreanMangaChapterTitle(chapter.title)}</span><ChevronRight size={18} aria-hidden />
           </Link>
         </li>)}
       </ul> : <EmptyState title="읽을 수 있는 회차가 없습니다" />}
