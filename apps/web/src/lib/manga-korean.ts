@@ -15,6 +15,14 @@ interface CachedMangaTitle {
 }
 
 const mangaTypes = new Set(['Q8274', 'Q21198342']);
+
+// WeLoMa uses these English aliases instead of the standard manga titles.
+const koreanTitleAliases = new Map<string, KoreanMangaTitle>([
+  ['piratekingmanga', { title: '원피스', article: '원피스 (만화)' }],
+  ['sorceryfightmanga', { title: '주술회전', article: '주술회전' }],
+  ['inregardstomyreincarnationasaslimemanga', { title: '전생했더니 슬라임이었던 건에 대하여' }],
+  ['shangrilafrontiershittygameshunterchallengesgodlygame', { title: '샹그릴라 프론티어' }],
+]);
 const titleCacheKey = 'moa.manga.koreanTitles.v1';
 const maxCachedTitles = 250;
 const maxConcurrentTitleLookups = 4;
@@ -69,7 +77,10 @@ export function mangaLookupTitle(title: string) {
 
 export async function findKoreanMangaTitle(title: string, signal: AbortSignal): Promise<KoreanMangaTitle | null> {
   signal.throwIfAborted();
-  const key = `title:${title.toLowerCase()}`;
+  const alias = koreanTitleAliases.get(titleKey(title));
+  if (alias) return alias;
+  const lookupTitle = title.replace(/\s*\(manga\)\s*$/i, '').trim();
+  const key = `title:${lookupTitle.toLowerCase()}`;
   const cached = readTitleCache()[key];
   if (cached?.expiresAt > Date.now()) return cached.value;
 
@@ -81,7 +92,7 @@ export async function findKoreanMangaTitle(title: string, signal: AbortSignal): 
 
   try {
     signal.throwIfAborted();
-    const result = await lookupKoreanMangaTitle(title, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
+    const result = await lookupKoreanMangaTitle(lookupTitle, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
     cacheTitle(key, result);
     return result;
   } finally {
