@@ -16,5 +16,6 @@ export function defaultTabs(sources: VideoSource[]): NavigationTab[] {
 }
 export function useNavigation() {
   const settings = useSettings(), sources = useSources();
-  return { settings: settings.data, tabs: settings.data?.navigation ?? defaultTabs(sources.data ?? []), sources: sources.data ?? [], pending: settings.isPending || sources.isPending, error: settings.isError || sources.isError };
+  const videoSources = (sources.data ?? []).filter(source => source.contentKind !== 'manga');
+  return { settings: settings.data, tabs: settings.data?.navigation ?? defaultTabs(videoSources), sources: videoSources, pending: settings.isPending || sources.isPending, error: settings.isError || sources.isError };
 }

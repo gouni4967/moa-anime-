@@ -41,6 +41,8 @@ export class Sources {
   constructor(public db: Store, public catalog: Catalog, private runtime = invokeMangayomi, private fetchCode = fetchExtension, private fetchRegistry = fetchRepository, public apk = new ApkBridge(), private browser = new SourceBrowser(), private byedpi = new ByeDpi()) {
     db.db.exec(`CREATE TABLE IF NOT EXISTS server_network(id INTEGER PRIMARY KEY CHECK(id=1),proxy TEXT NOT NULL,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS source_entries(id TEXT PRIMARY KEY,repository TEXT NOT NULL,entry TEXT NOT NULL,installed_entry TEXT,code TEXT,sha256 TEXT,preferences TEXT NOT NULL DEFAULT '{}',enabled INTEGER NOT NULL DEFAULT 0,type TEXT NOT NULL DEFAULT 'series',live INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS manga_works(id TEXT PRIMARY KEY,source_id TEXT NOT NULL REFERENCES source_entries(id) ON DELETE CASCADE,url TEXT NOT NULL,title TEXT NOT NULL,poster TEXT);
+      CREATE TABLE IF NOT EXISTS manga_chapters(id TEXT PRIMARY KEY,work_id TEXT NOT NULL REFERENCES manga_works(id) ON DELETE CASCADE,url TEXT NOT NULL,title TEXT NOT NULL,ordinal INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS source_network(source_id TEXT PRIMARY KEY REFERENCES source_entries(id) ON DELETE CASCADE,proxy TEXT NOT NULL DEFAULT '',browser INTEGER NOT NULL DEFAULT 0 CHECK(browser IN (0,1)));
       CREATE TABLE IF NOT EXISTS source_media(media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,source_id TEXT NOT NULL REFERENCES source_entries(id),url TEXT NOT NULL,detail_at INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS source_episodes(episode_id TEXT PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE,url TEXT NOT NULL);
@@ -108,7 +110,7 @@ export class Sources {
     catch { throw new ApiFailure(502,'proxy-connection-failed'); }
   }
   list(): VideoSource[] {
-    return this.db.all('SELECT * FROM source_entries WHERE code IS NOT NULL OR repository IN (SELECT url FROM source_repositories WHERE active=1) ORDER BY enabled DESC,id').map(r => { const e: MangayomiEntry = JSON.parse(r.entry); const backup = this.db.get('SELECT entry FROM source_backups WHERE source_id=?',r.id), health=this.db.get('SELECT * FROM source_health WHERE source_id=?',r.id); return { rollbackVersion:backup ? JSON.parse(backup.entry).version : undefined, health:health ? {ok:Boolean(health.ok),checkedAt:health.checked_at,action:health.action,code:health.code || undefined} : undefined, kind: (e as any).format === 'aniyomi-apk' ? 'aniyomi-apk' : 'mangayomi-js', id: r.id, iconUrl: this.sourceIcon(r.id,r.repository,e), name: e.name, version: e.version, installedVersion: r.installed_entry ? JSON.parse(r.installed_entry).version : undefined, installed: Boolean(r.code), enabled: Boolean(r.enabled), type: r.type, live: Boolean(r.live), repository: r.repository, lang: e.lang, notes: e.notes }; });
+    return this.db.all('SELECT * FROM source_entries WHERE code IS NOT NULL OR repository IN (SELECT url FROM source_repositories WHERE active=1) ORDER BY enabled DESC,id').map(r => { const e: MangayomiEntry = JSON.parse(r.entry); const backup = this.db.get('SELECT entry FROM source_backups WHERE source_id=?',r.id), health=this.db.get('SELECT * FROM source_health WHERE source_id=?',r.id); return { ...(this.isMangaRow(r) ? { contentKind: 'manga' as const } : {}), rollbackVersion:backup ? JSON.parse(backup.entry).version : undefined, health:health ? {ok:Boolean(health.ok),checkedAt:health.checked_at,action:health.action,code:health.code || undefined} : undefined, kind: (e as any).format === 'aniyomi-apk' ? 'aniyomi-apk' : 'mangayomi-js', id: r.id, iconUrl: this.sourceIcon(r.id,r.repository,e), name: e.name, version: e.version, installedVersion: r.installed_entry ? JSON.parse(r.installed_entry).version : undefined, installed: Boolean(r.code), enabled: Boolean(r.enabled), type: r.type, live: Boolean(r.live), repository: r.repository, lang: e.lang, notes: e.notes }; });
   }
   repositories() { return this.db.all('SELECT url,kind,checked_at AS checkedAt,error FROM source_repositories WHERE active=1 ORDER BY url'); }
   private repositoryUrl(value:string) { try{return publicUrl(value);}catch{throw new ApiFailure(400,'invalid-repository-url');} }
@@ -151,6 +153,22 @@ export class Sources {
     const row = this.db.get('SELECT * FROM source_entries WHERE id=?', id);
     if (!row || installed && (!row.code || !row.enabled)) throw new ApiFailure(404, 'source-unavailable');
     return row;
+  }
+  private isMangaRow(row: { installed_entry?: string | null; entry?: string }) {
+    const entry = JSON.parse(row.installed_entry || row.entry || '{}');
+    return entry.format === 'mangayomi-js' && entry.itemType === 0;
+  }
+  mangaRead<T>(id: string, action: 'list' | 'detail' | 'pages', params: Record<string, unknown>, map: (result: unknown) => T): Promise<T> {
+    return this.trackRead(id, () => this.serial(id, async () => {
+      if (!this.isMangaRow(this.row(id))) throw new ApiFailure(404, 'manga-source-required');
+      return map(await this.readCall(id, action, params));
+    }));
+  }
+  mangaImage(sourceId: string, url: unknown, headers: Record<string, string>) {
+    if (typeof url !== 'string') return undefined;
+    let safe: string;
+    try { safe = publicUrl(url); } catch { return undefined; }
+    return this.image(sourceId, safe, headers);
   }
   async serial<T>(id: string, task: () => Promise<T>, lane: SourceLane = 'exclusive'): Promise<T> {
     if (this.removing.has(id)) throw new ApiFailure(409, 'source-removing');
@@ -213,6 +231,7 @@ export class Sources {
           for (const image of this.db.all('SELECT image_id FROM source_image_owners WHERE source_id=?', id)) images.add(image.image_id);
           this.db.run('DELETE FROM source_image_owners WHERE source_id=?', id);
           this.db.run('DELETE FROM media WHERE id IN (SELECT media_id FROM source_media WHERE source_id=?)', id);
+          this.db.run('DELETE FROM manga_works WHERE source_id=?', id);
           this.db.run('DELETE FROM source_backups WHERE source_id=?', id);
           this.db.run('DELETE FROM source_apk WHERE source_id=?', id);
           this.db.run('DELETE FROM source_health WHERE source_id=?', id);
@@ -295,8 +314,13 @@ export class Sources {
     });
   }
   async diagnose(id:string,profile:string) {
-    this.row(id); this.invalidate(id);
-    try { await this.browse(id,profile,'popular',1,''); }
+    const row = this.row(id); this.invalidate(id);
+    try {
+      if (this.isMangaRow(row)) await this.mangaRead(id, 'list', { mode: 'popular', page: 1 }, result => {
+        if (!result || !Array.isArray((result as SourcePage).list)) throw new ApiFailure(502,'source-invalid-response');
+      });
+      else await this.browse(id,profile,'popular',1,'');
+    }
     catch(error) { this.recordHealth(id,false,'check',error); }
     return this.list().find(s=>s.id===id)!;
   }
@@ -572,7 +596,7 @@ export class Sources {
   }
   private async browsePage(id: string, mode: string, page: number, query: string, selection?: BrowseSelection, preferCached = false) {
     if (this.removing.has(id)) throw new ApiFailure(409, 'source-removing');
-    this.row(id);
+    if (this.isMangaRow(this.row(id))) throw new ApiFailure(400, 'video-source-required');
     // Validation also shares its schema read. Do it outside the source lane to avoid nested queue waits.
     if(selection && !preferCached)await this.checkFilters(id,selection);
     if(query || selection?.filters.length)mode='search';

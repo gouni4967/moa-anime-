@@ -518,12 +518,16 @@ export interface VideoSource {
   /** Server-cached source icon; used on the source management screen. */
   iconUrl?: string;
   kind?: "mangayomi-js" | "aniyomi-apk";
+  contentKind?: "manga";
   rollbackVersion?: string;
   health?: { ok: boolean; checkedAt: string; action: string; code?: string };
   id: string; name: string; version: string; installedVersion?: string;
   installed: boolean; enabled: boolean; type: MediaType; live: boolean;
   repository: string; lang: string; notes?: string;
 }
+export interface MangaCard { id: string; title: string; poster?: string }
+export interface MangaDetail extends MangaCard { description: string; chapters: Array<{ id: string; title: string }> }
+export interface MangaPages { workId: string; title: string; images: string[]; previousId?: string; nextId?: string }
 export interface SourcePreference {
   key: string; title: string; summary?: string; kind: "text" | "boolean" | "select" | "multi-select";
   disabled?: boolean;

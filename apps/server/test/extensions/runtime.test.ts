@@ -14,7 +14,11 @@ const source = `class DefaultExtension extends MProvider {
 
 test('repository accepts video JS entries, isolates duplicate IDs and rejects unsafe metadata', () => {
   assert.equal(entry.itemType, 1); assert.equal(entry.id, '123');
-  assert.equal(parseRepository([{ ...row, itemType: 0 }, { ...row, sourceCodeLanguage: 0 }]).length, 0);
+  const [manga] = parseRepository([{ ...row, itemType: 0 }, { ...row, sourceCodeLanguage: 0 }, { ...row, itemType: 2 }]);
+  assert.equal(manga.itemType, 0);
+  assert.equal(manga.isManga, true);
+  assert.equal(manga.baseUrl, 'https://example.com');
+  assert.equal(parseRepository([{ ...row, itemType: 0, baseUrl: 'https://example.com/' }])[0].baseUrl, 'https://example.com/');
   assert.throws(() => parseRepository([row, row]), /repository-entry-invalid/);
   const variants=parseRepository([{...row,lang:'en'},{...row,lang:'ja'}]);
   assert.deepEqual(variants.map(e=>[e.id,e.lang]),[['123','en'],['123','ja']]);

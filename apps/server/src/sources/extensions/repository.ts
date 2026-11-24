@@ -11,7 +11,7 @@ export function publicUrl(value: unknown): string {
 export function parseRepository(value: unknown): MangayomiEntry[] {
   if (!Array.isArray(value) || value.length > 2000) throw new Error('repository-format-invalid');
   const ids = new Set<string>();
-  return value.filter(row => row?.itemType === 1 && row?.sourceCodeLanguage === 1).map(row => {
+  return value.filter(row => (row?.itemType === 0 || row?.itemType === 1) && row?.sourceCodeLanguage === 1).map(row => {
     const id = String(row.id ?? '');
     const lang = typeof row.lang === 'string' ? row.lang.slice(0,20).trim() || 'all' : 'all';
     const identity = JSON.stringify([id,lang]);
@@ -20,7 +20,11 @@ export function parseRepository(value: unknown): MangayomiEntry[] {
     const text = (v: unknown, maximum = 2048) => typeof v === 'string' ? v.slice(0, maximum) : undefined;
     let iconUrl: string | undefined;
     try { if(row.iconUrl) iconUrl=publicUrl(row.iconUrl); } catch { /* Optional artwork must not reject a usable source. */ }
-    return { id, name: row.name, version: row.version, lang, format: 'mangayomi-js', itemType: 1, baseUrl: publicUrl(row.baseUrl), sourceCodeUrl: publicUrl(row.sourceCodeUrl), ...(iconUrl ? { iconUrl } : {}), apiUrl: text(row.apiUrl), additionalParams: text(row.additionalParams, 16384), dateFormat: text(row.dateFormat), dateFormatLocale: text(row.dateFormatLocale), typeSource: text(row.typeSource), appMinVerReq: text(row.appMinVerReq), notes: text(row.notes), isManga: false, isNsfw: row.isNsfw === true, hasCloudflare: row.hasCloudflare === true };
+    const itemType = row.itemType === 0 ? 0 : 1;
+    const checkedBase = publicUrl(row.baseUrl);
+    // Some manga extensions append an absolute path directly to the declared origin.
+    const baseUrl = itemType === 0 && /^https:\/\/[^/?#]+$/i.test(row.baseUrl) ? checkedBase.slice(0, -1) : checkedBase;
+    return { id, name: row.name, version: row.version, lang, format: 'mangayomi-js', itemType, baseUrl, sourceCodeUrl: publicUrl(row.sourceCodeUrl), ...(iconUrl ? { iconUrl } : {}), apiUrl: text(row.apiUrl), additionalParams: text(row.additionalParams, 16384), dateFormat: text(row.dateFormat), dateFormatLocale: text(row.dateFormatLocale), typeSource: text(row.typeSource), appMinVerReq: text(row.appMinVerReq), notes: text(row.notes), isManga: itemType === 0, isNsfw: row.isNsfw === true, hasCloudflare: row.hasCloudflare === true };
   });
 }
 export async function fetchRepository(url: string, signal = AbortSignal.timeout(20_000), proxy?: string) {

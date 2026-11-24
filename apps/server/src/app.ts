@@ -13,6 +13,7 @@ import { Store } from './db.js';
 import { registerDownloadRoutes } from './downloads/routes.js';
 import { Downloads } from './downloads/service.js';
 import { params } from './http.js';
+import { registerMangaRoutes } from './sources/manga.js';
 import { registerLibraryRoutes } from './library/routes.js';
 import { Library } from './library/service.js';
 import { AniListClient } from './metadata/anilist-client.js';
@@ -144,7 +145,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
       req.method === 'PATCH' && (route === '/api/sources/:id' || route === '/api/media/:id/metadata') ||
       req.method === 'DELETE' && route === '/api/episodes/:id/subtitles/:subtitleId';
     if (admin && req.moaAccount.role !== 'admin') throw new ApiFailure(403, 'admin-required');
-    const permission = req.method !== 'DELETE' && (route.startsWith('/api/playback') || route === '/api/episodes/:id/subtitles/preference') ? 'video.watch'
+    const permission = req.method !== 'DELETE' && (route.startsWith('/api/playback') || route.startsWith('/api/manga/') || route === '/api/episodes/:id/subtitles/preference') ? 'video.watch'
       : req.method === 'POST' && (route.endsWith('/translate') || route === '/api/translations/:id/priority') ? 'subtitles.translate'
       : req.method === 'POST' && (route === '/api/subtitles/import' || route === '/api/episodes/:id/subtitles/online') ? 'subtitles.add' : null;
     if (permission && !req.moaAccount.permissions.includes(permission)) throw new ApiFailure(403, 'permission-denied');
@@ -173,6 +174,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   registerUpdates(app, { prepareComponent:()=>{if(downloads.busy)throw new ApiFailure(409,'update-app-busy');return downloads.suspend();}, prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   registerSourceRoutes(app, { db, cfg, sources, online, remotePlayback, playback, tmdb, catalog, pins });
+  registerMangaRoutes(app, sources);
   registerMetadataRoutes(app, { db, cfg, tmdb, youtube, catalog, imageCache, sources });
   registerNetworkRoutes(app, { remoteAccess, sources });
   app.get('/api/me', async req => req.moaAccount);

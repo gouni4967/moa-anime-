@@ -27,7 +27,7 @@ export function SearchPage() {
   const [value, setValue] = useState(q);
   const result = useSearch(q);
   const sources = useSources();
-  const installed = sources.data?.filter(s => s.enabled) || [];
+  const installed = sources.data?.filter(s => s.enabled && s.contentKind !== 'manga') || [];
   const input = useRef<HTMLInputElement>(null);
 
   // Mobile has no search box in the header; this one mirrors the URL (without eating a space being typed).

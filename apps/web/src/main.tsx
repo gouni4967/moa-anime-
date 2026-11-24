@@ -12,6 +12,7 @@ import { ProfilesPage } from "./pages/ProfilesPage";
 import { HistoryPage, MePage, MyListPage, SearchPage } from "./pages/ListPages";
 import { SettingsPage } from "./pages/AdminPages";
 import { SourceBrowsePage } from "./pages/SourcesPage";
+import { MangaBrowsePage, MangaReaderPage, MangaWorkPage } from "./pages/MangaPage";
 import { WatchPage } from "./pages/WatchPage";
 import { ShortsPage } from "./pages/ShortsPage";
 import { listenForContinueChanges } from "./api/hide-continue";
@@ -84,6 +85,9 @@ const router = createBrowserRouter([{ element: <BrowsingLayout />, children: [
       { path: "/history", element: <HistoryPage /> },
       { path: "/sources", element: <RequireAdmin><Navigate to="/settings#sources" replace /></RequireAdmin> },
       { path: "/sources/:id", element: <SourceBrowsePage /> },
+      { path: "/manga/sources/:id", element: <MangaBrowsePage /> },
+      { path: "/manga/works/:id", element: <MangaWorkPage /> },
+      { path: "/manga/read/:id", element: <MangaReaderPage /> },
       { path: "/library", element: <RequireAdmin><Navigate to="/settings#library" replace /></RequireAdmin> },
       { path: "/plugins", element: <RequireAdmin><Navigate to="/settings#plugins" replace /></RequireAdmin> },
       { path: "/subtitles", element: <RequireAdmin><Navigate to="/settings#subtitle-library" replace /></RequireAdmin> },

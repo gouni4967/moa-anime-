@@ -11,7 +11,7 @@ export interface MangayomiEntry {
   dateFormatLocale?: string;
   typeSource?: string;
   isManga?: boolean;
-  itemType: 1;
+  itemType: 0 | 1;
   sourceCodeUrl: string;
   format: 'mangayomi-js';
   isNsfw: boolean;

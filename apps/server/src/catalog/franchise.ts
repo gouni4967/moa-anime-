@@ -149,7 +149,7 @@ export class Franchises {
     this.catalog.kids.assert(id,profile);
     const media = this.snapshot(profile), current = media.find(m=>m.card.id === id);
     if (!current) throw new ApiFailure(404,'media-not-found');
-    const active = this.catalog.db.all('SELECT id FROM source_entries WHERE enabled=1 AND live=0 AND type=? AND code IS NOT NULL ORDER BY id',current.card.type).map(r=>r.id as string);
+    const active = this.catalog.db.all("SELECT id FROM source_entries WHERE enabled=1 AND live=0 AND type=? AND code IS NOT NULL AND COALESCE(json_extract(COALESCE(installed_entry,entry),'$.itemType'),1)<>0 ORDER BY id",current.card.type).map(r=>r.id as string);
     const key = JSON.stringify([profile,franchiseIdentity(current),active]);
     const now = Date.now();
     for (const [k,v] of this.cache) if (!v.pending && v.expires <= now) this.cache.delete(k);
