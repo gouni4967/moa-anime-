@@ -1,7 +1,6 @@
-export interface KoreanMangaInfo {
+interface KoreanMangaTitle {
   title: string;
-  introduction?: string;
-  articleUrl?: string;
+  article?: string;
 }
 
 interface WikidataEntity {
@@ -11,6 +10,7 @@ interface WikidataEntity {
 }
 
 const mangaTypes = new Set(['Q8274', 'Q21198342']);
+let titleLookupQueue = Promise.resolve();
 
 async function wikimedia<T>(host: 'www.wikidata.org' | 'ko.wikipedia.org', params: Record<string, string>, signal: AbortSignal): Promise<T> {
   const query = new URLSearchParams({ ...params, origin: '*', format: 'json', formatversion: '2' });
@@ -28,21 +28,32 @@ function titleKey(title: string) {
   return title.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 }
 
-export async function findKoreanMangaInfo(sourceTitle: string, signal: AbortSignal): Promise<KoreanMangaInfo | null> {
-  const title = sourceTitle.replace(/\s*[-–—]\s*raw\s*$/i, '').trim();
+export function mangaLookupTitle(title: string) {
+  return title.replace(/\s*[-–—]\s*raw\s*$/i, '').trim();
+}
+
+export function findKoreanMangaTitle(title: string, signal: AbortSignal): Promise<KoreanMangaTitle | null> {
+  const lookup = titleLookupQueue.then(() => {
+    signal.throwIfAborted();
+    return lookupKoreanMangaTitle(title, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
+  });
+  titleLookupQueue = lookup.then(() => {}, () => {});
+  return lookup;
+}
+
+async function lookupKoreanMangaTitle(title: string, signal: AbortSignal): Promise<KoreanMangaTitle | null> {
   const key = titleKey(title);
   if (!key) return null;
   const language = /[가-힣]/u.test(title) ? 'ko' : /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(title) ? 'ja' : 'en';
-  const lookupSignal = AbortSignal.any([signal, AbortSignal.timeout(8000)]);
   const results = await wikimedia<{ search?: Array<{ id: string; match?: { text?: string } }> }>(
-    'www.wikidata.org', { action: 'wbsearchentities', search: title, language, limit: '10' }, lookupSignal,
+    'www.wikidata.org', { action: 'wbsearchentities', search: title, language, limit: '10' }, signal,
   );
   const ids = results.search?.filter(item => item.match?.text && titleKey(item.match.text) === key).map(item => item.id) ?? [];
   if (!ids.length) return null;
 
   const { entities } = await wikimedia<{ entities?: Record<string, WikidataEntity> }>('www.wikidata.org', {
     action: 'wbgetentities', ids: ids.join('|'), props: 'labels|claims|sitelinks', languages: 'ko', sitefilter: 'kowiki',
-  }, lookupSignal);
+  }, signal);
   const matches = Object.values(entities ?? {}).filter(entity => entity.claims?.P31?.some(claim =>
     mangaTypes.has(claim.mainsnak?.datavalue?.value?.id ?? ''),
   ));
@@ -51,18 +62,17 @@ export async function findKoreanMangaInfo(sourceTitle: string, signal: AbortSign
   const article = match.sitelinks?.kowiki?.title;
   const koreanTitle = match.labels?.ko?.value || article;
   if (!koreanTitle || !/[가-힣]/u.test(koreanTitle)) return null;
-  if (!article) return { title: koreanTitle };
+  return { title: koreanTitle, article };
+}
 
-  const articleUrl = `https://ko.wikipedia.org/wiki/${encodeURIComponent(article.replaceAll(' ', '_'))}`;
-  try {
-    const result = await wikimedia<{ query?: { pages?: Array<{ extract?: string }> } }>('ko.wikipedia.org', {
-      action: 'query', prop: 'extracts', exintro: '1', explaintext: '1', redirects: '1', titles: article,
-    }, lookupSignal);
-    const introduction = result.query?.pages?.[0]?.extract?.trim();
-    return { title: koreanTitle, introduction, articleUrl };
-  } catch {
-    return { title: koreanTitle, articleUrl };
-  }
+export async function findKoreanMangaIntroduction(article: string, signal: AbortSignal) {
+  const result = await wikimedia<{ query?: { pages?: Array<{ extract?: string }> } }>('ko.wikipedia.org', {
+    action: 'query', prop: 'extracts', exintro: '1', explaintext: '1', redirects: '1', titles: article,
+  }, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
+  return {
+    text: result.query?.pages?.[0]?.extract?.trim(),
+    url: `https://ko.wikipedia.org/wiki/${encodeURIComponent(article.replaceAll(' ', '_'))}`,
+  };
 }
 
 export function koreanMangaChapterTitle(title: string) {

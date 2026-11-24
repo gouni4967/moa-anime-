@@ -1,17 +1,54 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, ChevronRight } from 'lucide-react';
 import type { MangaCard, MangaDetail, MangaPages, Page } from '@moa/shared';
 import { Button, ButtonLink, EmptyState, ScrollLoader, SegmentedControl } from '../components/ui';
 import { api, ApiError, currentProfileId } from '../lib/api';
-import { findKoreanMangaInfo, koreanMangaChapterTitle } from '../lib/manga-korean';
+import { findKoreanMangaIntroduction, findKoreanMangaTitle, koreanMangaChapterTitle, mangaLookupTitle } from '../lib/manga-korean';
 import { useSources } from './SourcesPage';
 import '../styles/manga.scss';
 
 function MangaError({ error, retry }: { error: unknown; retry: () => void }) {
   if (error instanceof ApiError && error.code === 'manga-unrated') return <EmptyState title="이 프로필에서는 만화를 읽을 수 없어요" />;
   return <EmptyState title="만화를 불러오지 못했습니다" action={<Button onClick={retry}>다시 시도</Button>} />;
+}
+
+const koreanMetadataCacheTime = 60 * 60_000;
+
+function useKoreanMangaTitle(sourceTitle: string, enabled = true) {
+  const title = mangaLookupTitle(sourceTitle);
+  return useQuery({
+    queryKey: ['manga-korean-title', title.toLowerCase()],
+    enabled: enabled && !!title,
+    retry: false,
+    staleTime: koreanMetadataCacheTime,
+    gcTime: koreanMetadataCacheTime,
+    queryFn: ({ signal }) => findKoreanMangaTitle(title, signal),
+  });
+}
+
+function MangaBrowseCard({ item }: { item: MangaCard }) {
+  const card = useRef<HTMLAnchorElement>(null);
+  const [seen, setSeen] = useState(false);
+  const { data: korean } = useKoreanMangaTitle(item.title, seen);
+
+  useEffect(() => {
+    const element = card.current;
+    if (!element || seen || !('IntersectionObserver' in window)) return;
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      setSeen(true);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [seen]);
+
+  return <Link ref={card} className="manga-card" to={`/manga/works/${item.id}`}>
+    {item.poster && <img src={item.poster} alt="" loading="lazy" />}
+    <span title={korean && korean.title !== item.title ? item.title : undefined}>{korean?.title ?? item.title}</span>
+  </Link>;
 }
 
 export function MangaBrowsePage() {
@@ -35,9 +72,7 @@ export function MangaBrowsePage() {
     {result.isPending && <p role="status">작품 목록을 불러오는 중…</p>}
     {result.isError && <MangaError error={result.error} retry={() => void (result.isFetchNextPageError ? result.fetchNextPage() : result.refetch())} />}
     {result.isSuccess && !items.length && <EmptyState title="표시할 작품이 없습니다" />}
-    <div className="grid">{items.map(item => <Link key={item.id} className="manga-card" to={`/manga/works/${item.id}`}>
-      {item.poster && <img src={item.poster} alt="" loading="lazy" />}<span>{item.title}</span>
-    </Link>)}</div>
+    <div className="grid">{items.map(item => <MangaBrowseCard key={item.id} item={item} />)}</div>
     <ScrollLoader hasMore={result.hasNextPage} loading={result.isFetching} failed={result.isError} onLoad={result.fetchNextPage} />
   </div>;
 }
@@ -51,9 +86,12 @@ function MangaCover({ poster }: { poster?: string }) {
 
 function MangaWorkContent({ work }: { work: MangaDetail }) {
   const [order, setOrder] = useState<'oldest' | 'latest'>('oldest');
-  const { data: korean } = useQuery({
-    queryKey: ['manga-korean-info', work.title], retry: false, staleTime: 60 * 60 * 1000,
-    queryFn: ({ signal }) => findKoreanMangaInfo(work.title, signal),
+  const { data: korean } = useKoreanMangaTitle(work.title);
+  const article = korean?.article ?? '';
+  const { data: introduction } = useQuery({
+    queryKey: ['manga-korean-introduction', article], enabled: !!article,
+    retry: false, staleTime: koreanMetadataCacheTime,
+    queryFn: ({ signal }) => findKoreanMangaIntroduction(article, signal),
   });
   const firstChapter = work.chapters[0];
   const chapters = order === 'latest' ? [...work.chapters].reverse() : work.chapters;
@@ -74,13 +112,13 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
         >첫 회차 읽기</ButtonLink>}
       </div>
     </header>
-    {korean?.introduction && <section className="manga-synopsis" aria-labelledby="manga-introduction">
+    {introduction?.text && <section className="manga-synopsis" aria-labelledby="manga-introduction">
       <h2 id="manga-introduction">작품 소개</h2>
-      <p>{korean.introduction}</p>
-      <small><a href={korean.articleUrl} target="_blank" rel="noreferrer">한국어 위키백과</a> · <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer">CC BY-SA 4.0</a></small>
+      <p>{introduction.text}</p>
+      <small><a href={introduction.url} target="_blank" rel="noreferrer">한국어 위키백과</a> · <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer">CC BY-SA 4.0</a></small>
       {work.description && <details><summary>원문 줄거리</summary><p>{work.description}</p></details>}
     </section>}
-    {!korean?.introduction && work.description && <section className="manga-synopsis" aria-labelledby="manga-synopsis">
+    {!introduction?.text && work.description && <section className="manga-synopsis" aria-labelledby="manga-synopsis">
       <h2 id="manga-synopsis">줄거리</h2>
       <p>{work.description}</p>
     </section>}
