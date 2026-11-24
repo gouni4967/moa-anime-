@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, BookOpen, ChevronRight } from 'lucide-react';
 import type { MangaCard, MangaDetail, MangaPages, Page } from '@moa/shared';
-import { Button, ButtonLink, EmptyState, ScrollLoader } from '../components/ui';
+import { Button, ButtonLink, EmptyState, ScrollLoader, SegmentedControl } from '../components/ui';
 import { api, ApiError, currentProfileId } from '../lib/api';
 import { useSources } from './SourcesPage';
 import '../styles/manga.scss';
@@ -40,18 +41,63 @@ export function MangaBrowsePage() {
   </div>;
 }
 
+function MangaCover({ poster }: { poster?: string }) {
+  const [failed, setFailed] = useState(false);
+  return <div className="manga-work-cover">
+    {poster && !failed ? <img src={poster} alt="" onError={() => setFailed(true)} /> : <BookOpen size={34} aria-hidden />}
+  </div>;
+}
+
+function MangaWorkContent({ work }: { work: MangaDetail }) {
+  const [order, setOrder] = useState<'oldest' | 'latest'>('oldest');
+  const firstChapter = work.chapters[0];
+  const chapters = order === 'latest' ? [...work.chapters].reverse() : work.chapters;
+
+  return <>
+    <ButtonLink to={`/manga/sources/${encodeURIComponent(work.sourceId)}`} variant="ghost" icon={<ArrowLeft size={16} />}>
+      만화 목록
+    </ButtonLink>
+    <header className="manga-work-hero">
+      <MangaCover key={work.poster} poster={work.poster} />
+      <div className="manga-work-meta">
+        <h1>{work.title}</h1>
+        {work.author && <p className="manga-work-author">{work.author}</p>}
+        {firstChapter && <ButtonLink
+          to={`/manga/read/${firstChapter.id}`}
+          variant="primary"
+          icon={<BookOpen size={17} />}
+        >첫 회차 읽기</ButtonLink>}
+      </div>
+    </header>
+    {work.description && <section className="manga-synopsis" aria-labelledby="manga-synopsis">
+      <h2 id="manga-synopsis">줄거리</h2>
+      <p>{work.description}</p>
+    </section>}
+    <section className="manga-chapters" aria-labelledby="manga-chapters">
+      <div className="manga-chapters-header">
+        <h2 id="manga-chapters">회차 <small>{work.chapters.length}개</small></h2>
+        {work.chapters.length > 1 && <SegmentedControl label="회차 정렬" value={order} onChange={setOrder}
+          options={[{ value: 'oldest', label: '오래된순' }, { value: 'latest', label: '최신순' }]} />}
+      </div>
+      {chapters.length ? <ul className="manga-chapter-list">
+        {chapters.map(chapter => <li key={chapter.id}>
+          <Link to={`/manga/read/${chapter.id}`}>
+            <span>{chapter.title}</span><ChevronRight size={18} aria-hidden />
+          </Link>
+        </li>)}
+      </ul> : <EmptyState title="읽을 수 있는 회차가 없습니다" />}
+    </section>
+  </>;
+}
+
 export function MangaWorkPage() {
   const { id = '' } = useParams();
   const result = useQuery({ queryKey: ['manga-work', currentProfileId(), id], retry: false,
     queryFn: ({ signal }) => api<MangaDetail>(`/manga/works/${encodeURIComponent(id)}`, { signal }) });
-  return <div className="page-pad narrow">
-    <header className="page-head"><h1>{result.data?.title ?? '만화 회차'}</h1></header>
-    {result.isPending && <p role="status">회차를 불러오는 중…</p>}
+  return <div className="page-pad narrow manga-work">
+    {result.isPending && <p role="status">작품을 불러오는 중…</p>}
     {result.isError && <MangaError error={result.error} retry={() => void result.refetch()} />}
-    {result.data && <>
-      {result.data.description && <p>{result.data.description}</p>}
-      {result.data.chapters.length ? <ol>{result.data.chapters.map(chapter => <li key={chapter.id}><Link to={`/manga/read/${chapter.id}`}>{chapter.title}</Link></li>)}</ol> : <EmptyState title="읽을 수 있는 회차가 없습니다" />}
-    </>}
+    {result.data && <MangaWorkContent key={id} work={result.data} />}
   </div>;
 }
 

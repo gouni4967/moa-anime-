@@ -526,7 +526,12 @@ export interface VideoSource {
   repository: string; lang: string; notes?: string;
 }
 export interface MangaCard { id: string; title: string; poster?: string }
-export interface MangaDetail extends MangaCard { description: string; chapters: Array<{ id: string; title: string }> }
+export interface MangaDetail extends MangaCard {
+  sourceId: string;
+  author?: string;
+  description: string;
+  chapters: Array<{ id: string; title: string }>;
+}
 export interface MangaPages { workId: string; title: string; images: string[]; previousId?: string; nextId?: string }
 export interface SourcePreference {
   key: string; title: string; summary?: string; kind: "text" | "boolean" | "select" | "multi-select";

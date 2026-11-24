@@ -64,11 +64,16 @@ export class Manga {
         if (!chapters.has(chapterId)) chapters.set(chapterId, { id: chapterId, url: chapter.url, title: text(chapter.name) || `${chapters.size + 1}화` });
       }
       const all = [...chapters.values()];
+      const poster = this.sources.mangaImage(work.source_id, raw.imageUrl, headers(raw.imageHeaders)) ?? work.poster ?? undefined;
       this.db.transaction(() => {
+        this.db.run('UPDATE manga_works SET title=?,poster=? WHERE id=?', title, poster ?? null, id);
         this.db.run('DELETE FROM manga_chapters WHERE work_id=?', id);
         for (const [i, chapter] of all.entries()) this.db.run('INSERT INTO manga_chapters VALUES(?,?,?,?,?)', chapter.id, id, chapter.url, chapter.title, i);
       });
-      return { id, title, poster: work.poster || undefined, description: text(raw.description, 20000), chapters: all.map(({ id, title }) => ({ id, title })) };
+      return {
+        id, title, poster, sourceId: work.source_id, author: text(raw.author).trim() || undefined,
+        description: text(raw.description, 20000), chapters: all.map(({ id, title }) => ({ id, title })),
+      };
     });
   }
 
