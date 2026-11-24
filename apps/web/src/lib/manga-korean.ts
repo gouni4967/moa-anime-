@@ -9,8 +9,41 @@ interface WikidataEntity {
   claims?: { P31?: Array<{ mainsnak?: { datavalue?: { value?: { id?: string } } } }> };
 }
 
+interface CachedMangaTitle {
+  value: KoreanMangaTitle | null;
+  expiresAt: number;
+}
+
 const mangaTypes = new Set(['Q8274', 'Q21198342']);
-let titleLookupQueue = Promise.resolve();
+const titleCacheKey = 'moa.manga.koreanTitles.v1';
+const maxCachedTitles = 250;
+const maxConcurrentTitleLookups = 4;
+const waitingTitleLookups: Array<() => void> = [];
+let activeTitleLookups = 0;
+
+function readTitleCache(): Record<string, CachedMangaTitle> {
+  try {
+    const entries = JSON.parse(localStorage.getItem(titleCacheKey) ?? '{}');
+    return entries && typeof entries === 'object' && !Array.isArray(entries) ? entries : {};
+  } catch {
+    return {};
+  }
+}
+
+function cacheTitle(key: string, value: KoreanMangaTitle | null) {
+  try {
+    const entries = readTitleCache();
+    const now = Date.now();
+    delete entries[key];
+    const remaining = Object.entries(entries)
+      .filter(([, entry]) => entry?.expiresAt > now)
+      .slice(-(maxCachedTitles - 1));
+    const expiresAt = now + (value ? 14 * 24 : 6) * 60 * 60_000;
+    localStorage.setItem(titleCacheKey, JSON.stringify(Object.fromEntries([...remaining, [key, { value, expiresAt }]])));
+  } catch {
+    // The query cache still works when browser storage is unavailable.
+  }
+}
 
 async function wikimedia<T>(host: 'www.wikidata.org' | 'ko.wikipedia.org', params: Record<string, string>, signal: AbortSignal): Promise<T> {
   const query = new URLSearchParams({ ...params, origin: '*', format: 'json', formatversion: '2' });
@@ -21,7 +54,9 @@ async function wikimedia<T>(host: 'www.wikidata.org' | 'ko.wikipedia.org', param
     headers: { 'Api-User-Agent': 'MOA-Manga/1.0 (https://github.com/gouni4967/moa-anime-)' },
   });
   if (!response.ok) throw new Error(`Wikimedia HTTP ${response.status}`);
-  return response.json() as Promise<T>;
+  const data = await response.json() as T & { error?: { code: string } };
+  if (data.error) throw new Error(`Wikimedia API ${data.error.code}`);
+  return data;
 }
 
 function titleKey(title: string) {
@@ -32,13 +67,28 @@ export function mangaLookupTitle(title: string) {
   return title.replace(/\s*[-–—]\s*raw\s*$/i, '').trim();
 }
 
-export function findKoreanMangaTitle(title: string, signal: AbortSignal): Promise<KoreanMangaTitle | null> {
-  const lookup = titleLookupQueue.then(() => {
+export async function findKoreanMangaTitle(title: string, signal: AbortSignal): Promise<KoreanMangaTitle | null> {
+  signal.throwIfAborted();
+  const key = `title:${title.toLowerCase()}`;
+  const cached = readTitleCache()[key];
+  if (cached?.expiresAt > Date.now()) return cached.value;
+
+  if (activeTitleLookups < maxConcurrentTitleLookups) {
+    activeTitleLookups++;
+  } else {
+    await new Promise<void>(resolve => waitingTitleLookups.push(resolve));
+  }
+
+  try {
     signal.throwIfAborted();
-    return lookupKoreanMangaTitle(title, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
-  });
-  titleLookupQueue = lookup.then(() => {}, () => {});
-  return lookup;
+    const result = await lookupKoreanMangaTitle(title, AbortSignal.any([signal, AbortSignal.timeout(8000)]));
+    cacheTitle(key, result);
+    return result;
+  } finally {
+    const next = waitingTitleLookups.shift();
+    if (next) next();
+    else activeTitleLookups--;
+  }
 }
 
 async function lookupKoreanMangaTitle(title: string, signal: AbortSignal): Promise<KoreanMangaTitle | null> {
