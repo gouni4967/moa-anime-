@@ -1,6 +1,6 @@
 import { useNavigation, tabPath } from "../../lib/navigation";
 import { hasLoginGate } from "../../lib/api";
-import { Bookmark, Clapperboard, History, House, LogOut, Search, Settings, UserRound, UsersRound, X } from "lucide-react";
+import { BookOpen, Bookmark, Clapperboard, History, House, LogOut, Search, Settings, UserRound, UsersRound, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import type { Profile } from "@moa/shared";
@@ -13,6 +13,7 @@ import { settledQuery, useSettledQuery } from "../../lib/search-input";
 import { PluginScripts, PluginShortcuts } from '../plugins/WebsitePlugins';
 import { AvatarArt, avatarSpec } from "../../components/avatars";
 import { UpdateNotice } from './UpdateNotice';
+import { useMangaSources } from '../../pages/MangaPage';
 
 
 
@@ -131,7 +132,8 @@ export function AppShell() {
   const profile = profiles.data?.find(item => item.id === currentProfileId());
   const shorts = shortsAvailable(useSettings().data, profile?.kids);
   const onShorts = location.pathname === "/shorts";
-  const sections = [...tabs.map(t => ({ to: tabPath(t.id), label: t.name, end: true })), { to: "/my-list", label: "내 목록", end: true }, ...(shorts ? [{ to: "/shorts", label: "쇼츠", end: true }] : [])];
+  const hasManga = useMangaSources().sources.length > 0;
+  const sections = [...tabs.map(t => ({ to: tabPath(t.id), label: t.name, end: true })), ...(hasManga ? [{ to: "/manga", label: "만화", end: false }] : []), { to: "/my-list", label: "내 목록", end: true }, ...(shorts ? [{ to: "/shorts", label: "쇼츠", end: true }] : [])];
   const [searchOpen, setSearchOpen] = useState(location.pathname === "/search");
   const overHero = ["/", "/series", "/movies", "/anime"].includes(location.pathname) || location.pathname.startsWith("/tabs/") || location.pathname === "/local" || location.pathname.startsWith("/title/");
 
@@ -172,6 +174,7 @@ export function AppShell() {
         <NavLink to="/" end className={({ isActive }) => cx("tab", isActive && "is-active")}><House size={22} /><span>홈</span></NavLink>
         <NavLink to="/search" className={({ isActive }) => cx("tab", isActive && "is-active")}><Search size={22} /><span>검색</span></NavLink>
         {shorts && <NavLink to="/shorts" className={({ isActive }) => cx("tab", isActive && "is-active")}><Clapperboard size={22} /><span>쇼츠</span></NavLink>}
+        {hasManga && <NavLink to="/manga" className={({ isActive }) => cx("tab", isActive && "is-active")}><BookOpen size={22} /><span>만화</span></NavLink>}
         <NavLink to="/my-list" className={({ isActive }) => cx("tab", isActive && "is-active")}><Bookmark size={22} /><span>내 목록</span></NavLink>
         <NavLink to="/me" className={({ isActive }) => cx("tab", isActive && "is-active")}><UserRound size={22} /><span>마이</span></NavLink>
       </nav>

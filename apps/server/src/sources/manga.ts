@@ -33,9 +33,9 @@ export class Manga {
     return lookupMangaDexTitle(title.trim());
   }
 
-  browse(sourceId: string, profileId: string, page: number, term: string): Promise<Page<MangaCard>> {
+  browse(sourceId: string, profileId: string, page: number, term: string, mode: 'popular' | 'latest'): Promise<Page<MangaCard>> {
     this.assertProfile(profileId);
-    return this.sources.mangaRead(sourceId, 'list', { mode: term ? 'search' : 'popular', page, query: term }, result => {
+    return this.sources.mangaRead(sourceId, 'list', { mode: term ? 'search' : mode, page, query: term }, result => {
       const raw = result as SourcePage;
       if (!raw || !Array.isArray(raw.list)) throw new ApiFailure(502, 'source-invalid-response');
       const items = new Map<string, MangaCard>();
@@ -109,8 +109,8 @@ export function registerMangaRoutes(app: FastifyInstance, sources: Sources) {
   const manga = new Manga(sources);
   app.get('/api/manga/metadata/korean-title', { schema: { querystring: object({ title: { type: 'string', minLength: 1, maxLength: 500 } }, ['title']) } },
     async req => manga.koreanTitle(query(req).title, profile(req)));
-  app.get('/api/manga/sources/:id/browse', { schema: { params: idParams(), querystring: object({ page: pageQuery, q: { type: 'string', maxLength: 200, default: '' } }) } },
-    async req => manga.browse(params(req).id, profile(req), query(req).page ?? 1, query(req).q ?? ''));
+  app.get('/api/manga/sources/:id/browse', { schema: { params: idParams(), querystring: object({ page: pageQuery, q: { type: 'string', maxLength: 200, default: '' }, mode: { type: 'string', enum: ['popular', 'latest'], default: 'popular' } }) } },
+    async req => manga.browse(params(req).id, profile(req), query(req).page ?? 1, query(req).q ?? '', query(req).mode ?? 'popular'));
   app.get('/api/manga/works/:id', { schema: { params: idParams() } }, async req => manga.detail(params(req).id, profile(req)));
   app.get('/api/manga/chapters/:id/pages', { schema: { params: idParams() } }, async req => manga.pages(params(req).id, profile(req)));
 }

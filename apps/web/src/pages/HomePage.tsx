@@ -14,6 +14,8 @@ import { resumeSceneEnabled } from '../player/playback/resume-scene';
 import { HomePlugins } from '../features/plugins/WebsitePlugins';
 import { RecommendationRow } from '../features/catalog/RecommendationRow';
 
+import { LatestMangaRows, useMangaSources } from './MangaPage';
+
 export function HomePage({ localOnly = false }: { localOnly?: boolean }) {
   const account = useMe().data;
   const admin = account?.role === "admin";
@@ -26,6 +28,7 @@ export function HomePage({ localOnly = false }: { localOnly?: boolean }) {
   const type = localOnly && ['movie', 'series', 'anime'].includes(params.get('type') || '') ? params.get('type') as MediaType : undefined;
   const home = useHome(type, providers, !localOnly && tabId === "home" ? "all" : "tab");
   const hideContinue = useHideContinue();
+  const hasManga = useMangaSources().sources.length > 0;
   const feed = useTabFeed(installed, tab);
   // Prefer wide artwork for the banner; posters only fill in when needed.
   const heroPool = installed.length ? [...feed.cards.filter(c => c.backdrop), ...feed.cards.filter(c => !c.backdrop && c.poster)] : home.data?.hero ?? [];
@@ -35,6 +38,7 @@ export function HomePage({ localOnly = false }: { localOnly?: boolean }) {
   return <div className="home">
     <div className="section-chips no-scrollbar" aria-label="콘텐츠 탭">
       {tabs.map(t => <NavLink key={t.id} to={tabPath(t.id)} end className={({ isActive }) => cx('chip', isActive && 'is-active')}>{t.name}</NavLink>)}
+      {hasManga && <NavLink to="/manga" className="chip">만화</NavLink>}
     </div>
     {heroPending ? <HeroSkeleton /> : <Hero key={tab?.id} items={hero} />}
     <div className={cx('rows', !heroPending && !hero.length && 'rows-no-hero')}>
@@ -43,7 +47,7 @@ export function HomePage({ localOnly = false }: { localOnly?: boolean }) {
         {error && <EmptyState title="구성을 불러오지 못했습니다" action={<Button onClick={() => location.reload()}>다시 시도</Button>} />}
         {!providers.length && !rows.length && !home.isPending && !error && <EmptyState icon={<Settings2 size={40} />} title="이 탭에 표시할 소스가 없어요" body="영상 소스나 로컬 라이브러리를 이 탭에 연결해 주세요." action={<ButtonLink variant="primary" to={`/settings/tabs?edit=${encodeURIComponent(tab.id)}`}>탭 편집</ButtonLink>} />}
         {rows.map((row, i) => <Row key={row.id} row={row} index={i} onHideContinue={row.kind === 'continue' ? hideContinue : undefined} showResumeScene={row.kind === 'continue' ? resumeSceneEnabled(settings) : undefined} resumeAccountId={row.kind === 'continue' ? account?.id : undefined} />)}
-        {!localOnly && tabId === 'home' && <RecommendationRow />}
+        {!localOnly && tabId === 'home' && <><LatestMangaRows /><RecommendationRow /></>}
         {!!installed.length && <TabFeed feed={feed} startIndex={rows.length} />}
         {tab.includeLocal && !installed.length && !home.isPending && !home.isError && !rows.length && <EmptyState title="로컬 라이브러리가 비어 있어요" body={admin ? "영상 폴더를 추가하면 자동으로 정리해 줍니다." : "관리자가 영상 폴더를 추가하면 여기에 보여요."} action={admin ? <ButtonLink variant="primary" to="/library">영상 폴더 추가</ButtonLink> : undefined} />}
         {admin && tab.includeLocal && rows.length > 0 && <p className="feed-note"><Link to="/library">로컬 영상 폴더 관리</Link></p>}

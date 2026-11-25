@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, ChevronRight } from 'lucide-react';
-import type { MangaCard, MangaDetail, MangaPages, Page } from '@moa/shared';
+import type { MangaCard, MangaDetail, MangaPages, Page, VideoSource } from '@moa/shared';
 import { Button, ButtonLink, EmptyState, ScrollLoader, SegmentedControl } from '../components/ui';
+import { RowShell } from '../components/Row';
+import { useProfiles } from '../api/queries';
+import { useSourceFilters } from '../features/sources/SourceFilters';
 import { api, ApiError, currentProfileId } from '../lib/api';
 import { findKoreanMangaIntroduction, findKoreanMangaTitle, koreanMangaChapterTitle, mangaLookupTitle } from '../lib/manga-korean';
 import { useSources } from './SourcesPage';
@@ -51,25 +54,92 @@ function MangaBrowseCard({ item }: { item: MangaCard }) {
   </Link>;
 }
 
+type MangaSort = 'popular' | 'latest';
+
+export function useMangaSources() {
+  const sources = useSources();
+  const profiles = useProfiles();
+  const profile = profiles.data?.find(item => item.id === currentProfileId());
+  return {
+    pending: sources.isPending || profiles.isPending,
+    error: sources.isError || profiles.isError,
+    sources: profile && !profile.kids ? (sources.data ?? []).filter(source => source.enabled && source.contentKind === 'manga') : [],
+  };
+}
+
+function useMangaBrowse(id: string, term: string, sort: MangaSort, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: ['manga-browse', currentProfileId(), id, term, term ? 'search' : sort],
+    enabled, initialPageParam: 1, retry: false, staleTime: 60_000,
+    queryFn: ({ pageParam, signal }) => {
+      const query = new URLSearchParams({ page: String(pageParam), q: term, mode: sort });
+      return api<Page<MangaCard>>(`/manga/sources/${encodeURIComponent(id)}/browse?${query}`, { signal });
+    },
+    getNextPageParam: page => page.hasNextPage ? page.page + 1 : undefined,
+  });
+}
+
+function LatestMangaRow({ source, showFallback }: { source: VideoSource; showFallback: boolean }) {
+  const schema = useSourceFilters(source.id);
+  const latest = schema.data?.availableModes.includes('latest') ?? false;
+  const result = useMangaBrowse(source.id, '', 'latest', latest);
+  const items = result.data?.pages[0]?.items.slice(0, 12) ?? [];
+  const browse = `/manga/sources/${encodeURIComponent(source.id)}`;
+  if (!items.length) {
+    return showFallback ? <section className="row">
+      <h2>{source.name}</h2>
+      {(schema.isPending || result.isLoading) && <p role="status">최근 업데이트를 불러오는 중…</p>}
+      <ButtonLink to={browse}>작품 둘러보기</ButtonLink>
+    </section> : null;
+  }
+  return <RowShell id={`manga-latest-${source.id}`} title={`최근 업데이트 만화 · ${source.name}`} layout="poster" count={items.length}
+    more={<Link className="row-more" to={`${browse}?sort=latest`}>모두 보기<ChevronRight size={16} /></Link>}>
+    {items.map(item => <MangaBrowseCard key={item.id} item={item} />)}
+  </RowShell>;
+}
+
+export function LatestMangaRows({ showFallback = false }: { showFallback?: boolean }) {
+  const state = useMangaSources();
+  if (showFallback && !state.sources.length) {
+    if (state.pending) return <p role="status">만화 소스를 불러오는 중…</p>;
+    return <EmptyState title={state.error ? '만화 소스를 불러오지 못했어요' : '표시할 만화 소스가 없어요'} />;
+  }
+  return <>{state.sources.map(source => <LatestMangaRow key={source.id} source={source} showFallback={showFallback} />)}</>;
+}
+
+export function MangaHomePage() {
+  return <div className="page-pad">
+    <header className="page-head"><h1>만화</h1></header>
+    <LatestMangaRows showFallback />
+  </div>;
+}
+
 export function MangaBrowsePage() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const term = params.get('q') ?? '';
   const [input, setInput] = useState(term);
-  const source = useSources().data?.find(s => s.id === id && s.contentKind === 'manga');
-  const result = useInfiniteQuery({
-    queryKey: ['manga-browse', currentProfileId(), id, term], initialPageParam: 1, retry: false,
-    queryFn: ({ pageParam, signal }) => api<Page<MangaCard>>(`/manga/sources/${encodeURIComponent(id)}/browse?page=${pageParam}&q=${encodeURIComponent(term)}`, { signal }),
-    getNextPageParam: page => page.hasNextPage ? page.page + 1 : undefined,
-  });
+  const sources = useSources();
+  const source = sources.data?.find(s => s.id === id && s.contentKind === 'manga');
+  const sort = params.get('sort') === 'latest' ? 'latest' : 'popular';
+  const result = useMangaBrowse(id, term, sort, Boolean(source?.enabled));
+  const capabilities = useSourceFilters(source?.enabled ? id : '');
   const items = [...new Map(result.data?.pages.flatMap(page => page.items).map(item => [item.id, item]) ?? []).values()];
   return <div className="page-pad">
     <header className="page-head"><h1>{source?.name ?? '만화'}</h1></header>
-    <form className="source-search-form" role="search" onSubmit={event => { event.preventDefault(); setParams(input.trim() ? { q: input.trim() } : {}); }}>
+    <form className="source-search-form" role="search" onSubmit={event => { event.preventDefault(); const next = new URLSearchParams(params); if (input.trim()) next.set('q', input.trim()); else next.delete('q'); setParams(next); }}>
       <label className="field"><span>만화 제목</span><input type="search" value={input} maxLength={200} onChange={event => setInput(event.target.value)} /></label>
       <Button type="submit">검색</Button>
     </form>
-    {result.isPending && <p role="status">작품 목록을 불러오는 중…</p>}
+    {!term && capabilities.data?.availableModes.includes('latest') && <SegmentedControl label="작품 정렬" value={sort} options={[
+      { value: 'popular', label: '인기순' }, { value: 'latest', label: '최신 업데이트순' },
+    ]} onChange={value => {
+      const next = new URLSearchParams(params);
+      if (value === 'latest') next.set('sort', value); else next.delete('sort');
+      setParams(next);
+    }} />}
+    {sources.isSuccess && !source?.enabled && <EmptyState title="사용할 수 없는 만화 소스입니다" />}
+    {result.isLoading && <p role="status">작품 목록을 불러오는 중…</p>}
     {result.isError && <MangaError error={result.error} retry={() => void (result.isFetchNextPageError ? result.fetchNextPage() : result.refetch())} />}
     {result.isSuccess && !items.length && <EmptyState title="표시할 작품이 없습니다" />}
     <div className="grid">{items.map(item => <MangaBrowseCard key={item.id} item={item} />)}</div>
