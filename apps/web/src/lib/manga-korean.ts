@@ -4,6 +4,7 @@ interface KoreanMangaTitle {
   title: string;
   article?: string;
   mangaDexUrl?: string;
+  mangaBakaUrl?: string;
 }
 
 interface WikidataEntity {
@@ -27,7 +28,7 @@ const koreanTitleAliases = new Map<string, KoreanMangaTitle>([
   ['inregardstomyreincarnationasaslimemanga', { title: '전생했더니 슬라임이었던 건에 대하여' }],
   ['shangrilafrontiershittygameshunterchallengesgodlygame', { title: '샹그릴라 프론티어' }],
 ]);
-const titleCacheKey = 'moa.manga.koreanTitles.v3';
+const titleCacheKey = 'moa.manga.koreanTitles.v4';
 const maxCachedTitles = 250;
 const maxConcurrentTitleLookups = 4;
 const waitingTitleLookups: Array<() => void> = [];
@@ -36,7 +37,9 @@ let activeTitleLookups = 0;
 function readTitleCache(): Record<string, CachedMangaTitle> {
   try {
     const stored = localStorage.getItem(titleCacheKey);
-    const previous = localStorage.getItem('moa.manga.koreanTitles.v2') ?? localStorage.getItem('moa.manga.koreanTitles.v1');
+    const previous = stored === null
+      ? localStorage.getItem('moa.manga.koreanTitles.v3') ?? localStorage.getItem('moa.manga.koreanTitles.v2') ?? localStorage.getItem('moa.manga.koreanTitles.v1')
+      : null;
     const entries: Record<string, CachedMangaTitle> | null = JSON.parse(stored ?? previous ?? '{}');
     if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {};
     return stored ? entries : Object.fromEntries(Object.entries(entries)
@@ -115,6 +118,14 @@ export async function findKoreanMangaTitle(title: string, signal: AbortSignal): 
     for (const candidate of [mangaDex.canonical, mangaDex.alternateCanonical]) {
       if (result) break;
       if (candidate) result = await lookupKoreanMangaTitle(candidate, canonicalSignal);
+    }
+    if (!result) {
+      const candidate = mangaDex.canonical ?? mangaDex.alternateCanonical ?? lookupTitle;
+      const mangaBaka = await api<{ title?: string; mangaBakaUrl?: string }>(
+        `/manga/metadata/mangabaka-title?title=${encodeURIComponent(candidate)}`,
+        { signal: AbortSignal.any([signal, AbortSignal.timeout(10_500)]) },
+      );
+      if (mangaBaka.title && mangaBaka.mangaBakaUrl) result = { title: mangaBaka.title, mangaBakaUrl: mangaBaka.mangaBakaUrl };
     }
     cacheTitle(key, result);
     return result;

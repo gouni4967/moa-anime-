@@ -51,7 +51,10 @@ function MangaBrowseCard({ item }: { item: MangaCard }) {
 
   return <Link ref={card} className="manga-card" to={`/manga/works/${item.id}`}>
     {item.poster && <img src={item.poster} alt="" loading="lazy" />}
-    <span title={korean && korean.title !== item.title ? item.title : undefined}>{korean?.title ?? item.title}</span>
+    <span title={korean && korean.title !== item.title ? item.title : undefined}>
+      {korean?.title ?? item.title}
+      {korean?.mangaBakaUrl && <small className="source-muted"> · MangaBaka</small>}
+    </span>
   </Link>;
 }
 
@@ -198,6 +201,7 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
       <div className="manga-work-meta">
         <h1>{korean?.title ?? work.title}</h1>
         {korean?.mangaDexUrl && <small><a href={korean.mangaDexUrl} target="_blank" rel="noreferrer">제목 출처 · MangaDex</a></small>}
+        {korean?.mangaBakaUrl && <small><a href={korean.mangaBakaUrl} target="_blank" rel="noreferrer">제목 출처 · MangaBaka</a> · <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noreferrer">CC BY-NC-SA 4.0</a></small>}
         {work.author && <p className="manga-work-author">{work.author}</p>}
         {firstChapter && <ButtonLink
           to={`/manga/read/${firstChapter.id}`}

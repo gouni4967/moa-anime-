@@ -10,6 +10,14 @@ interface MangaDexWork {
 const titleKey = (title: string) => title.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 let nextLookupAt = 0;
 
+async function waitForMetadataSlot() {
+  const now = Date.now();
+  const start = Math.max(now, nextLookupAt);
+  if (start - now > 3500) throw new ApiFailure(503, 'manga-metadata-busy');
+  nextLookupAt = start + 350;
+  if (start > now) await delay(start - now);
+}
+
 function matchesShortEnglishTitle(query: string, work: MangaDexWork) {
   const words = (value: string) => value.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
   const short = words(query);
@@ -27,11 +35,7 @@ export async function lookupMangaDexTitle(title: string) {
   const key = titleKey(title);
   if (!key) return {};
 
-  const now = Date.now();
-  const start = Math.max(now, nextLookupAt);
-  if (start - now > 3500) throw new ApiFailure(503, 'manga-metadata-busy');
-  nextLookupAt = start + 350;
-  if (start > now) await delay(start - now);
+  await waitForMetadataSlot();
 
   const url = new URL('https://api.mangadex.org/manga');
   url.searchParams.set('title', title);
@@ -74,4 +78,45 @@ export async function lookupMangaDexTitle(title: string) {
   }
   const [canonical, alternateCanonical] = [...distinct.values()];
   return { canonical, alternateCanonical };
+}
+
+interface MangaBakaTitle {
+  title: string;
+  language: string;
+  traits: string[];
+  is_primary?: boolean;
+}
+
+interface MangaBakaSeries {
+  id: number;
+  state: string;
+  titles: MangaBakaTitle[];
+}
+
+export async function lookupMangaBakaTitle(title: string) {
+  const key = titleKey(title);
+  if (!key) return {};
+  await waitForMetadataSlot();
+
+  const url = new URL('https://api.mangabaka.org/v2/series/match');
+  url.searchParams.set('q', title);
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(5500),
+    redirect: 'error',
+    headers: { 'User-Agent': 'MOA-Manga/1.0 (https://github.com/gouni4967/moa-anime-)' },
+  });
+  if (!response.ok) throw new ApiFailure(502, 'manga-metadata-unavailable');
+  const payload = await response.json() as { data?: MangaBakaSeries[] };
+  if (!Array.isArray(payload.data)) throw new ApiFailure(502, 'manga-metadata-unavailable');
+
+  const matches = payload.data.filter(work => work.state === 'active' && Array.isArray(work.titles) &&
+    work.titles.some(entry => typeof entry.title === 'string' && titleKey(entry.title) === key));
+  if (matches.length !== 1) return {};
+
+  const [work] = matches;
+  const official = work.titles.filter(entry => entry.language === 'ko' && entry.traits?.includes('official') && /[가-힣]/u.test(entry.title));
+  const primary = official.filter(entry => entry.is_primary);
+  const korean = primary.length === 1 ? primary[0] : official.length === 1 ? official[0] : undefined;
+  if (!korean || !Number.isSafeInteger(work.id) || work.id < 1) return {};
+  return { title: korean.title, mangaBakaUrl: `https://mangabaka.org/manga/${work.id}` };
 }

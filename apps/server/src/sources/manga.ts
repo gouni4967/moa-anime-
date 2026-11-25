@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { idParams, object, pageQuery, params, profile, query } from '../http.js';
 import { ApiFailure } from '../util.js';
 import type { SourceItem, SourcePage } from './extensions/index.js';
-import { lookupMangaDexTitle } from './manga-metadata.js';
+import { lookupMangaBakaTitle, lookupMangaDexTitle } from './manga-metadata.js';
 import { browseSelection } from './schema.js';
 import type { Sources } from './service.js';
 
@@ -29,9 +29,9 @@ export class Manga {
     return row;
   }
 
-  koreanTitle(title: string, profileId: string) {
+  koreanTitle(title: string, profileId: string, provider: 'mangadex' | 'mangabaka') {
     this.assertProfile(profileId);
-    return lookupMangaDexTitle(title.trim());
+    return provider === 'mangabaka' ? lookupMangaBakaTitle(title.trim()) : lookupMangaDexTitle(title.trim());
   }
 
   browse(sourceId: string, profileId: string, page: number, term: string, mode: 'popular' | 'latest', selection?: BrowseSelection): Promise<Page<MangaCard>> {
@@ -108,8 +108,11 @@ export class Manga {
 
 export function registerMangaRoutes(app: FastifyInstance, sources: Sources) {
   const manga = new Manga(sources);
-  app.get('/api/manga/metadata/korean-title', { schema: { querystring: object({ title: { type: 'string', minLength: 1, maxLength: 500 } }, ['title']) } },
-    async req => manga.koreanTitle(query(req).title, profile(req)));
+  const titleQuery = object({ title: { type: 'string', minLength: 1, maxLength: 500 } }, ['title']);
+  app.get('/api/manga/metadata/korean-title', { schema: { querystring: titleQuery } },
+    async req => manga.koreanTitle(query(req).title, profile(req), 'mangadex'));
+  app.get('/api/manga/metadata/mangabaka-title', { schema: { querystring: titleQuery } },
+    async req => manga.koreanTitle(query(req).title, profile(req), 'mangabaka'));
   const browseFields = { page: pageQuery, q: { type: 'string', maxLength: 200, default: '' }, mode: { type: 'string', enum: ['popular', 'latest'], default: 'popular' } };
   app.get('/api/manga/sources/:id/browse', { schema: { params: idParams(), querystring: object(browseFields) } },
     async req => manga.browse(params(req).id, profile(req), query(req).page ?? 1, query(req).q ?? '', query(req).mode ?? 'popular'));
