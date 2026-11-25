@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, ChevronRight } from 'lucide-react';
-import type { MangaCard, MangaDetail, MangaPages, Page, VideoSource } from '@moa/shared';
+import type { BrowseSelection, MangaCard, MangaDetail, MangaPages, Page, VideoSource } from '@moa/shared';
 import { Button, ButtonLink, EmptyState, ScrollLoader, SegmentedControl } from '../components/ui';
 import { RowShell } from '../components/Row';
 import { useProfiles } from '../api/queries';
-import { useSourceFilters } from '../features/sources/SourceFilters';
+import { SourceFilters, useSourceFilters } from '../features/sources/SourceFilters';
+import { parseSelection } from '../features/sources/source-browse';
 import { api, ApiError, currentProfileId } from '../lib/api';
 import { findKoreanMangaIntroduction, findKoreanMangaTitle, koreanMangaChapterTitle, mangaLookupTitle } from '../lib/manga-korean';
 import { useSources } from './SourcesPage';
@@ -67,13 +68,18 @@ export function useMangaSources() {
   };
 }
 
-function useMangaBrowse(id: string, term: string, sort: MangaSort, enabled = true) {
+function useMangaBrowse(id: string, term: string, sort: MangaSort, enabled = true, selection?: BrowseSelection) {
+  const filters = selection?.filters.length ? selection : undefined;
   return useInfiniteQuery({
-    queryKey: ['manga-browse', currentProfileId(), id, term, term ? 'search' : sort],
+    queryKey: ['manga-browse', currentProfileId(), id, term, term || filters ? 'search' : sort, filters],
     enabled, initialPageParam: 1, retry: false, staleTime: 60_000,
     queryFn: ({ pageParam, signal }) => {
+      const endpoint = `/manga/sources/${encodeURIComponent(id)}/browse`;
+      if (filters) return api<Page<MangaCard>>(endpoint, {
+        method: 'POST', body: { page: pageParam, q: term, mode: sort, selection: filters }, signal,
+      });
       const query = new URLSearchParams({ page: String(pageParam), q: term, mode: sort });
-      return api<Page<MangaCard>>(`/manga/sources/${encodeURIComponent(id)}/browse?${query}`, { signal });
+      return api<Page<MangaCard>>(`${endpoint}?${query}`, { signal });
     },
     getNextPageParam: page => page.hasNextPage ? page.page + 1 : undefined,
   });
@@ -122,7 +128,17 @@ export function MangaBrowsePage() {
   const sources = useSources();
   const source = sources.data?.find(s => s.id === id && s.contentKind === 'manga');
   const sort = params.get('sort') === 'latest' ? 'latest' : 'popular';
-  const result = useMangaBrowse(id, term, sort, Boolean(source?.enabled));
+  const rawFilters = params.get('filters');
+  const selection = parseSelection(rawFilters);
+  const [draft, setDraft] = useState(selection);
+  useEffect(() => { setInput(term); }, [term, id]);
+  useEffect(() => { setDraft(parseSelection(rawFilters)); }, [rawFilters, id]);
+  const setFilters = (value?: BrowseSelection) => {
+    const next = new URLSearchParams(params);
+    if (value?.filters.length) next.set('filters', JSON.stringify(value)); else next.delete('filters');
+    setParams(next);
+  };
+  const result = useMangaBrowse(id, term, sort, Boolean(source?.enabled), selection);
   const capabilities = useSourceFilters(source?.enabled ? id : '');
   const items = [...new Map(result.data?.pages.flatMap(page => page.items).map(item => [item.id, item]) ?? []).values()];
   return <div className="page-pad">
@@ -131,13 +147,20 @@ export function MangaBrowsePage() {
       <label className="field"><span>만화 제목</span><input type="search" value={input} maxLength={200} onChange={event => setInput(event.target.value)} /></label>
       <Button type="submit">검색</Button>
     </form>
-    {!term && capabilities.data?.availableModes.includes('latest') && <SegmentedControl label="작품 정렬" value={sort} options={[
+    {!term && !selection?.filters.length && capabilities.data?.availableModes.includes('latest') && <SegmentedControl label="작품 정렬" value={sort} options={[
       { value: 'popular', label: '인기순' }, { value: 'latest', label: '최신 업데이트순' },
     ]} onChange={value => {
       const next = new URLSearchParams(params);
       if (value === 'latest') next.set('sort', value); else next.delete('sort');
       setParams(next);
     }} />}
+    {!!capabilities.data?.filters.length && <details className="browse-filters">
+      <summary>장르 및 필터{selection?.filters.length ? ' · 적용 중' : ''}</summary>
+      <SourceFilters schema={capabilities.data} value={draft} onChange={setDraft}
+        actions={<Button variant="primary" onClick={() => setFilters(draft)}>조건 적용</Button>} />
+    </details>}
+    {rawFilters && (!selection || result.error instanceof ApiError && result.error.code === 'source-filters-changed') &&
+      <p role="alert">필터가 변경됐어요. <button className="text-btn" onClick={() => setFilters()}>조건 초기화</button></p>}
     {sources.isSuccess && !source?.enabled && <EmptyState title="사용할 수 없는 만화 소스입니다" />}
     {result.isLoading && <p role="status">작품 목록을 불러오는 중…</p>}
     {result.isError && <MangaError error={result.error} retry={() => void (result.isFetchNextPageError ? result.fetchNextPage() : result.refetch())} />}

@@ -158,9 +158,13 @@ export class Sources {
     const entry = JSON.parse(row.installed_entry || row.entry || '{}');
     return entry.format === 'mangayomi-js' && entry.itemType === 0;
   }
-  mangaRead<T>(id: string, action: 'list' | 'detail' | 'pages', params: Record<string, unknown>, map: (result: unknown) => T): Promise<T> {
+  mangaRead<T>(id: string, action: 'list' | 'detail' | 'pages', params: Record<string, unknown>, map: (result: unknown) => T, selection?: BrowseSelection): Promise<T> {
     return this.trackRead(id, () => this.serial(id, async () => {
       if (!this.isMangaRow(this.row(id))) throw new ApiFailure(404, 'manga-source-required');
+      if (action === 'list' && selection?.filters.length) {
+        await this.checkFilters(id, selection, await this.schemaValue(id));
+        return map(await this.readCall(id, action, { ...params, mode: 'search', filters: selection.filters }));
+      }
       return map(await this.readCall(id, action, params));
     }));
   }

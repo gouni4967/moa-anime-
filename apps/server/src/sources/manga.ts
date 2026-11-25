@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { MangaCard, MangaDetail, MangaPages, Page } from '@moa/shared';
+import type { BrowseSelection, MangaCard, MangaDetail, MangaPages, Page } from '@moa/shared';
 import type { FastifyInstance } from 'fastify';
 import { idParams, object, pageQuery, params, profile, query } from '../http.js';
 import { ApiFailure } from '../util.js';
 import type { SourceItem, SourcePage } from './extensions/index.js';
 import { lookupMangaDexTitle } from './manga-metadata.js';
+import { browseSelection } from './schema.js';
 import type { Sources } from './service.js';
 
 const idFor = (...parts: string[]) => 'manga-' + createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 40);
@@ -33,7 +34,7 @@ export class Manga {
     return lookupMangaDexTitle(title.trim());
   }
 
-  browse(sourceId: string, profileId: string, page: number, term: string, mode: 'popular' | 'latest'): Promise<Page<MangaCard>> {
+  browse(sourceId: string, profileId: string, page: number, term: string, mode: 'popular' | 'latest', selection?: BrowseSelection): Promise<Page<MangaCard>> {
     this.assertProfile(profileId);
     return this.sources.mangaRead(sourceId, 'list', { mode: term ? 'search' : mode, page, query: term }, result => {
       const raw = result as SourcePage;
@@ -53,7 +54,7 @@ export class Manga {
         }
       });
       return { items: [...items.values()], page, hasNextPage: Boolean(raw.hasNextPage) };
-    });
+    }, selection);
   }
 
   detail(id: string, profileId: string): Promise<MangaDetail> {
@@ -109,8 +110,14 @@ export function registerMangaRoutes(app: FastifyInstance, sources: Sources) {
   const manga = new Manga(sources);
   app.get('/api/manga/metadata/korean-title', { schema: { querystring: object({ title: { type: 'string', minLength: 1, maxLength: 500 } }, ['title']) } },
     async req => manga.koreanTitle(query(req).title, profile(req)));
-  app.get('/api/manga/sources/:id/browse', { schema: { params: idParams(), querystring: object({ page: pageQuery, q: { type: 'string', maxLength: 200, default: '' }, mode: { type: 'string', enum: ['popular', 'latest'], default: 'popular' } }) } },
+  const browseFields = { page: pageQuery, q: { type: 'string', maxLength: 200, default: '' }, mode: { type: 'string', enum: ['popular', 'latest'], default: 'popular' } };
+  app.get('/api/manga/sources/:id/browse', { schema: { params: idParams(), querystring: object(browseFields) } },
     async req => manga.browse(params(req).id, profile(req), query(req).page ?? 1, query(req).q ?? '', query(req).mode ?? 'popular'));
+  app.post('/api/manga/sources/:id/browse', { schema: { params: idParams(), body: object({ ...browseFields, selection: browseSelection }, ['selection']) } },
+    async req => {
+      const { page = 1, q = '', mode = 'popular', selection } = req.body as { page?: number; q?: string; mode?: 'popular' | 'latest'; selection: BrowseSelection };
+      return manga.browse(params(req).id, profile(req), page, q, mode, selection);
+    });
   app.get('/api/manga/works/:id', { schema: { params: idParams() } }, async req => manga.detail(params(req).id, profile(req)));
   app.get('/api/manga/chapters/:id/pages', { schema: { params: idParams() } }, async req => manga.pages(params(req).id, profile(req)));
 }
