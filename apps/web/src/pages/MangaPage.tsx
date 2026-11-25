@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, BookOpen, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookOpen, ChevronRight } from 'lucide-react';
 import type { BrowseSelection, MangaCard, MangaDetail, MangaPages, Page, VideoSource } from '@moa/shared';
 import { Button, ButtonLink, EmptyState, ScrollLoader, SegmentedControl } from '../components/ui';
 import { RowShell } from '../components/Row';
@@ -50,11 +50,13 @@ function MangaBrowseCard({ item }: { item: MangaCard }) {
   }, [seen]);
 
   return <Link ref={card} className="manga-card" to={`/manga/works/${item.id}`}>
-    {item.poster && <img src={item.poster} alt="" loading="lazy" />}
-    <span title={korean && korean.title !== item.title ? item.title : undefined}>
-      {korean?.title ?? item.title}
-      {korean?.mangaBakaUrl && <small className="source-muted"> · MangaBaka</small>}
-    </span>
+    <MangaCover key={item.poster} poster={item.poster} lazy />
+    <div className="manga-card-caption">
+      <span className="manga-card-title" title={korean && korean.title !== item.title ? `${korean.title} · ${item.title}` : item.title}>
+        {korean?.title ?? item.title}
+      </span>
+      {korean?.mangaBakaUrl && <small>MangaBaka</small>}
+    </div>
   </Link>;
 }
 
@@ -116,9 +118,65 @@ export function LatestMangaRows({ showFallback = false }: { showFallback?: boole
   return <>{state.sources.map(source => <LatestMangaRow key={source.id} source={source} showFallback={showFallback} />)}</>;
 }
 
+const mangaWatchlistKey = (profile: string | null) => ['manga-watchlist', profile];
+
+function useMangaWatchlist() {
+  return useQuery({
+    queryKey: mangaWatchlistKey(currentProfileId()), retry: false,
+    queryFn: ({ signal }) => api<MangaCard[]>('/manga/watchlist', { signal }),
+  });
+}
+
+export function MangaSavedPage() {
+  const result = useMangaWatchlist();
+  return <div className="page-pad">
+    <header className="page-head"><h1>찜한 만화</h1><ButtonLink to="/manga" icon={<ArrowLeft size={16} />}>만화</ButtonLink></header>
+    {result.isPending && <p role="status">찜한 만화를 불러오는 중…</p>}
+    {result.isError && <MangaError error={result.error} retry={() => void result.refetch()} />}
+    {result.isSuccess && !result.data.length && <EmptyState title="찜한 만화가 없어요" />}
+    {!!result.data?.length && <div className="grid">{result.data.map(item => <MangaBrowseCard key={item.id} item={item} />)}</div>}
+  </div>;
+}
+
+const updateDays = [
+  { value: 'mon', label: '월' }, { value: 'tue', label: '화' }, { value: 'wed', label: '수' },
+  { value: 'thu', label: '목' }, { value: 'fri', label: '금' }, { value: 'sat', label: '토' }, { value: 'sun', label: '일' },
+];
+
+export function MangaUpdatesPage() {
+  const { id = '' } = useParams();
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('day') ?? '';
+  const today = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Asia/Seoul' }).format(new Date()).toLowerCase();
+  const day = updateDays.some(option => option.value === requested) ? requested : today;
+  const result = useInfiniteQuery({
+    queryKey: ['manga-updates', currentProfileId(), id, day], initialPageParam: 1, retry: false, staleTime: 60_000,
+    queryFn: ({ pageParam, signal }) => api<Page<MangaCard>>(
+      `/manga/sources/${encodeURIComponent(id)}/updates?weekday=${day}&page=${pageParam}`, { signal }),
+    getNextPageParam: page => page.hasNextPage ? page.page + 1 : undefined,
+  });
+  const items = [...new Map(result.data?.pages.flatMap(page => page.items).map(item => [item.id, item]) ?? []).values()];
+  return <div className="page-pad">
+    <header className="page-head"><h1>요일별 업데이트</h1><ButtonLink to="/manga" icon={<ArrowLeft size={16} />}>만화</ButtonLink></header>
+    <p className="source-muted">WeLoMa에 올라온 최근 7일 업데이트 · 한국시간</p>
+    <SegmentedControl label="업데이트 요일" value={day} options={updateDays} onChange={value => setParams({ day: value })} />
+    {result.isPending && <p role="status">업데이트를 불러오는 중…</p>}
+    {result.isError && <MangaError error={result.error} retry={() => void (result.isFetchNextPageError ? result.fetchNextPage() : result.refetch())} />}
+    {result.isSuccess && !result.hasNextPage && !items.length && <EmptyState title="이 요일에 올라온 작품이 없어요" />}
+    <div className="grid">{items.map(item => <MangaBrowseCard key={item.id} item={item} />)}</div>
+    <ScrollLoader hasMore={result.hasNextPage} loading={result.isFetching} failed={result.isError} onLoad={result.fetchNextPage} />
+  </div>;
+}
+
 export function MangaHomePage() {
+  const state = useMangaSources();
+  const weloma = state.sources.find(source => /^weloma$/i.test(source.name));
   return <div className="page-pad">
     <header className="page-head"><h1>만화</h1></header>
+    {!!state.sources.length && <div className="source-toolbar">
+      {weloma && <ButtonLink to={`/manga/sources/${encodeURIComponent(weloma.id)}/updates`}>요일별 업데이트</ButtonLink>}
+      <ButtonLink to="/manga/saved" icon={<Bookmark size={16} />}>찜한 만화</ButtonLink>
+    </div>}
     <LatestMangaRows showFallback />
   </div>;
 }
@@ -173,10 +231,10 @@ export function MangaBrowsePage() {
   </div>;
 }
 
-function MangaCover({ poster }: { poster?: string }) {
+function MangaCover({ poster, lazy = false }: { poster?: string; lazy?: boolean }) {
   const [failed, setFailed] = useState(false);
   return <div className="manga-work-cover">
-    {poster && !failed ? <img src={poster} alt="" onError={() => setFailed(true)} /> : <BookOpen size={34} aria-hidden />}
+    {poster && !failed ? <img src={poster} alt="" loading={lazy ? 'lazy' : undefined} onError={() => setFailed(true)} /> : <BookOpen size={34} aria-hidden />}
   </div>;
 }
 
@@ -188,6 +246,14 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
     queryKey: ['manga-korean-introduction', article], enabled: !!article,
     retry: false, staleTime: koreanMetadataCacheTime,
     queryFn: ({ signal }) => findKoreanMangaIntroduction(article, signal),
+  });
+  const saved = useMangaWatchlist();
+  const queryClient = useQueryClient();
+  const profile = currentProfileId();
+  const isSaved = saved.data?.some(item => item.id === work.id) ?? false;
+  const save = useMutation({
+    mutationFn: (next: boolean) => api<void>(`/manga/watchlist/${encodeURIComponent(work.id)}`, { method: next ? 'PUT' : 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: mangaWatchlistKey(profile) }),
   });
   const firstChapter = work.chapters[0];
   const chapters = order === 'latest' ? [...work.chapters].reverse() : work.chapters;
@@ -203,11 +269,15 @@ function MangaWorkContent({ work }: { work: MangaDetail }) {
         {korean?.mangaDexUrl && <small><a href={korean.mangaDexUrl} target="_blank" rel="noreferrer">제목 출처 · MangaDex</a></small>}
         {korean?.mangaBakaUrl && <small><a href={korean.mangaBakaUrl} target="_blank" rel="noreferrer">제목 출처 · MangaBaka</a> · <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noreferrer">CC BY-NC-SA 4.0</a></small>}
         {work.author && <p className="manga-work-author">{work.author}</p>}
-        {firstChapter && <ButtonLink
-          to={`/manga/read/${firstChapter.id}`}
-          variant="primary"
-          icon={<BookOpen size={17} />}
-        >첫 회차 읽기</ButtonLink>}
+        <div className="source-toolbar">
+          {firstChapter && <ButtonLink to={`/manga/read/${firstChapter.id}`} variant="primary" icon={<BookOpen size={17} />}>첫 회차 읽기</ButtonLink>}
+          <Button aria-pressed={isSaved} icon={<Bookmark size={17} fill={isSaved ? 'currentColor' : 'none'} />}
+            disabled={save.isPending || saved.isPending} onClick={() => {
+              if (saved.isError) void saved.refetch();
+              else save.mutate(!isSaved);
+            }}>{saved.isError ? '찜 상태 다시 확인' : isSaved ? '찜 해제' : '찜하기'}</Button>
+        </div>
+        {save.isError && <p role="alert">찜 상태를 바꾸지 못했어요.</p>}
       </div>
     </header>
     {introduction?.text && <section className="manga-synopsis" aria-labelledby="manga-introduction">

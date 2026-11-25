@@ -1,9 +1,26 @@
 .manga-card {
   display: grid;
   align-content: start;
+  grid-template-columns: minmax(0, 1fr);
   gap: .5rem;
+  min-width: 0;
+}
 
-  img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; }
+.manga-card-caption {
+  min-width: 0;
+}
+
+.manga-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.manga-card-caption small {
+  display: block;
+  color: var(--text-3);
 }
 
 .manga-reader {
