@@ -58,7 +58,7 @@ export class Manga {
     eligible();
     const result = await weLoMaUpdates(page, weekday);
     eligible();
-    return this.storeBrowsePage(sourceId, page, result);
+    return this.storeBrowsePage(sourceId, result.page, result);
   }
 
   watchlist(profileId: string): MangaCard[] {

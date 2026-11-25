@@ -162,7 +162,7 @@ export function MangaUpdatesPage() {
     <SegmentedControl label="업데이트 요일" value={day} options={updateDays} onChange={value => setParams({ day: value })} />
     {result.isPending && <p role="status">업데이트를 불러오는 중…</p>}
     {result.isError && <MangaError error={result.error} retry={() => void (result.isFetchNextPageError ? result.fetchNextPage() : result.refetch())} />}
-    {result.isSuccess && !result.hasNextPage && !items.length && <EmptyState title="이 요일에 올라온 작품이 없어요" />}
+    {result.isSuccess && !result.hasNextPage && !items.length && <EmptyState title="조회 범위에서 이 요일의 업데이트를 찾지 못했어요" />}
     <div className="grid">{items.map(item => <MangaBrowseCard key={item.id} item={item} />)}</div>
     <ScrollLoader hasMore={result.hasNextPage} loading={result.isFetching} failed={result.isError} onLoad={result.fetchNextPage} />
   </div>;

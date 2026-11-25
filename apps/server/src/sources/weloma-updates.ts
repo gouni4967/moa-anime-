@@ -4,9 +4,9 @@ import { compatibilityHttp } from './extensions/http.js';
 import type { SourceItem, SourcePage } from './extensions/index.js';
 
 const origin = 'https://weloma.art';
-export const maxWeLoMaUpdatePages = 24;
+export const maxWeLoMaUpdatePages = 128;
 const dayMs = 24 * 60 * 60_000;
-const weekdays = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', weekday: 'short' });
+const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const units: Record<string, number> = { second: 1000, minute: 60_000, hour: 60 * 60_000, day: dayMs, week: 7 * dayMs };
 // Recent update dates use Korea Standard Time (UTC+09:00).
 const koreanDay = (time: number) => Math.floor((time + 9 * units.hour) / dayMs);
@@ -59,8 +59,7 @@ async function loadUpdates(page: number) {
   return parseWeLoMaUpdates(result.bytes.toString('utf8'), Date.now());
 }
 
-export async function weLoMaUpdates(page: number, weekday: string): Promise<SourcePage> {
-  const now = Date.now();
+function updatesPage(page: number, now: number) {
   let entry = pages.get(page);
   if (!entry || entry.expires <= now) {
     const result = loadUpdates(page);
@@ -68,14 +67,51 @@ export async function weLoMaUpdates(page: number, weekday: string): Promise<Sour
     pages.set(page, entry);
     result.catch(() => { if (pages.get(page)?.result === result) pages.delete(page); });
   }
-  const { updates, hasNextPage } = await entry.result;
+  return entry.result;
+}
+
+function oldestUpdateDay(page: UpdatePage) {
+  return Math.min(Infinity, ...page.updates.map(update => koreanDay(update.publishedAt)));
+}
+
+async function firstPossiblePage(targetDay: number, now: number) {
+  const reachesTarget = (data: UpdatePage) => oldestUpdateDay(data) <= targetDay || !data.hasNextPage;
+  let low = 0;
+  let high = 1;
+  let data = await updatesPage(high, now);
+  // WeLoMa sorts newest first. Skip over pages that contain only newer updates.
+  while (!reachesTarget(data) && high < maxWeLoMaUpdatePages) {
+    low = high;
+    high = Math.min(high * 2, maxWeLoMaUpdatePages);
+    data = await updatesPage(high, now);
+  }
+  while (high - low > 1) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = await updatesPage(mid, now);
+    if (reachesTarget(candidate)) {
+      high = mid;
+      data = candidate;
+    } else {
+      low = mid;
+    }
+  }
+  return { page: high, data };
+}
+
+export async function weLoMaUpdates(requestedPage: number, weekday: string): Promise<SourcePage & { page: number }> {
+  const now = Date.now();
   const today = koreanDay(now);
-  const recent = updates.filter(update => {
-    const date = koreanDay(update.publishedAt);
-    return date >= today - 6 && date <= today;
-  });
+  const targetIndex = weekdays.indexOf(weekday);
+  if (targetIndex < 0) throw new ApiFailure(400, 'manga-updates-invalid-weekday');
+  const todayIndex = new Date(today * dayMs).getUTCDay();
+  const targetDay = today - (todayIndex - targetIndex + 7) % 7;
+  const { page, data } = requestedPage === 1
+    ? await firstPossiblePage(targetDay, now)
+    : { page: requestedPage, data: await updatesPage(requestedPage, now) };
+
   return {
-    list: recent.filter(update => weekdays.format(update.publishedAt).toLowerCase() === weekday).map(update => update.item),
-    hasNextPage: hasNextPage && page < maxWeLoMaUpdatePages && (updates.length === 0 || recent.length === updates.length),
+    page,
+    list: data.updates.filter(update => koreanDay(update.publishedAt) === targetDay).map(update => update.item),
+    hasNextPage: data.hasNextPage && page < maxWeLoMaUpdatePages && oldestUpdateDay(data) >= targetDay,
   };
 }
