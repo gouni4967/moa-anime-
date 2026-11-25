@@ -53,7 +53,8 @@ export function parseWeLoMaUpdates(html: string, now: number): UpdatePage {
 async function loadUpdates(page: number) {
   const url = new URL('/manga-list.html', origin);
   url.search = new URLSearchParams({ name: '', sort: 'last_update', page: String(page) }).toString();
-  const result = await compatibilityHttp({ url: url.toString() }, AbortSignal.timeout(8000), [], 1024 * 1024, undefined, false);
+  // WeLoMa redirects the list query to a short link before returning the HTML.
+  const result = await compatibilityHttp({ url: url.toString() }, AbortSignal.timeout(8000), [], 1024 * 1024);
   if (result.statusCode !== 200) throw new ApiFailure(502, 'manga-updates-unavailable');
   return parseWeLoMaUpdates(result.bytes.toString('utf8'), Date.now());
 }
