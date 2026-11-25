@@ -8,6 +8,7 @@ interface KoreanMangaTitle {
 
 interface WikidataEntity {
   labels?: { ko?: { value: string } };
+  aliases?: { ko?: { value: string }[] };
   sitelinks?: { kowiki?: { title: string } };
   claims?: { P31?: Array<{ mainsnak?: { datavalue?: { value?: { id?: string } } } }> };
 }
@@ -26,7 +27,7 @@ const koreanTitleAliases = new Map<string, KoreanMangaTitle>([
   ['inregardstomyreincarnationasaslimemanga', { title: '전생했더니 슬라임이었던 건에 대하여' }],
   ['shangrilafrontiershittygameshunterchallengesgodlygame', { title: '샹그릴라 프론티어' }],
 ]);
-const titleCacheKey = 'moa.manga.koreanTitles.v2';
+const titleCacheKey = 'moa.manga.koreanTitles.v3';
 const maxCachedTitles = 250;
 const maxConcurrentTitleLookups = 4;
 const waitingTitleLookups: Array<() => void> = [];
@@ -35,7 +36,8 @@ let activeTitleLookups = 0;
 function readTitleCache(): Record<string, CachedMangaTitle> {
   try {
     const stored = localStorage.getItem(titleCacheKey);
-    const entries: Record<string, CachedMangaTitle> | null = JSON.parse(stored ?? localStorage.getItem('moa.manga.koreanTitles.v1') ?? '{}');
+    const previous = localStorage.getItem('moa.manga.koreanTitles.v2') ?? localStorage.getItem('moa.manga.koreanTitles.v1');
+    const entries: Record<string, CachedMangaTitle> | null = JSON.parse(stored ?? previous ?? '{}');
     if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {};
     return stored ? entries : Object.fromEntries(Object.entries(entries)
       .filter(([, entry]) => entry?.value));
@@ -104,15 +106,16 @@ export async function findKoreanMangaTitle(title: string, signal: AbortSignal): 
       cacheTitle(key, wikidata);
       return wikidata;
     }
-    const mangaDex = await api<{ title?: string; mangaDexUrl?: string; canonical?: string }>(
+    const mangaDex = await api<{ title?: string; mangaDexUrl?: string; canonical?: string; alternateCanonical?: string }>(
       `/manga/metadata/korean-title?title=${encodeURIComponent(lookupTitle)}`,
       { signal: AbortSignal.any([signal, AbortSignal.timeout(10500)]) },
     );
-    const result = mangaDex.title
-      ? { title: mangaDex.title, mangaDexUrl: mangaDex.mangaDexUrl }
-      : mangaDex.canonical
-        ? await lookupKoreanMangaTitle(mangaDex.canonical, AbortSignal.any([signal, AbortSignal.timeout(5000)]))
-        : null;
+    let result: KoreanMangaTitle | null = mangaDex.title ? { title: mangaDex.title, mangaDexUrl: mangaDex.mangaDexUrl } : null;
+    const canonicalSignal = AbortSignal.any([signal, AbortSignal.timeout(6500)]);
+    for (const candidate of [mangaDex.canonical, mangaDex.alternateCanonical]) {
+      if (result) break;
+      if (candidate) result = await lookupKoreanMangaTitle(candidate, canonicalSignal);
+    }
     cacheTitle(key, result);
     return result;
   } finally {
@@ -133,7 +136,7 @@ async function lookupKoreanMangaTitle(title: string, signal: AbortSignal): Promi
   if (!ids.length) return null;
 
   const { entities } = await wikimedia<{ entities?: Record<string, WikidataEntity> }>('www.wikidata.org', {
-    action: 'wbgetentities', ids: ids.join('|'), props: 'labels|claims|sitelinks', languages: 'ko', sitefilter: 'kowiki',
+    action: 'wbgetentities', ids: ids.join('|'), props: 'labels|aliases|claims|sitelinks', languages: 'ko', sitefilter: 'kowiki',
   }, signal);
   const matches = Object.values(entities ?? {}).filter(entity => entity.claims?.P31?.some(claim =>
     mangaTypes.has(claim.mainsnak?.datavalue?.value?.id ?? ''),
@@ -141,8 +144,10 @@ async function lookupKoreanMangaTitle(title: string, signal: AbortSignal): Promi
   if (matches.length !== 1) return null;
   const [match] = matches;
   const article = match.sitelinks?.kowiki?.title;
-  const koreanTitle = match.labels?.ko?.value || article;
-  if (!koreanTitle || !/[가-힣]/u.test(koreanTitle)) return null;
+  const aliases = [...new Set(match.aliases?.ko?.map(item => item.value).filter(value => /[가-힣]/u.test(value)))];
+  const koreanTitle = [match.labels?.ko?.value, article, aliases.length === 1 ? aliases[0] : undefined]
+    .find(value => value && /[가-힣]/u.test(value));
+  if (!koreanTitle) return null;
   return { title: koreanTitle, article };
 }
 
